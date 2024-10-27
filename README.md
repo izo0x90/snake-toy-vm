@@ -10,4 +10,4 @@ A generalized toy virtual machine, assembler and debuger written in python. Inte
   - Allows for definition of custom assembly sytaxes
   - Swapping/ extending instruction sets
  
-*It's all virtual machines in virtual machins in virtual machines ... and Transformer models infrencing the output of virtual machines ... - Probaly someone*
+*It's all virtual machines in virtual machins in virtual machines ... and soon Transformer models infrencing the output of virtual machines ... - Probaly someone*
