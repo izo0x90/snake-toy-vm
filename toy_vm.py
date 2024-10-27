@@ -11,15 +11,12 @@ WORD_SIZE = 16
 BITS_IN_BYTE = 8
 
 
-def inst_is_full_word(firts_byte: int) -> bool:
-    return firts_byte > 0x7F
-
-
 class InstructionCodes(Enum):
     NOP = 0x00
     LOADA = 0x1
     LOADB = 0x2
     ADD = 0x3
+    JMP = 0x10
     HALT = HALT_INS_CODE
 
 
@@ -30,14 +27,22 @@ class AssemblerToken(Protocol):
 class AssemblerParamToken(Protocol):
     def __init__(self, value: str): ...
 
-    def encode(self, assembler_instance: "Assembler") -> bytes: ...
+    def encode(self, assembler_instance: "Assembler", offset: int) -> bytes: ...
+
+
+class AssemblerMetaParamToken(Protocol):
+    def __init__(self, value: str): ...
+
+    def encode(
+        self, assembler_instance: "Assembler", offset: int
+    ) -> AssemblerParamToken: ...
 
 
 @dataclass
 class InlineParamToken:
     value: str
 
-    def encode(self, assembler_instance: "Assembler"):
+    def encode(self, assembler_instance: "Assembler", offset: int):
         word_size_bytes = assembler_instance.word_size_bytes
         base = 10
         match self.value[:2]:
@@ -47,6 +52,30 @@ class InlineParamToken:
                 base = 2
 
         return int(self.value, base).to_bytes(length=word_size_bytes)
+
+
+@dataclass
+class LabelParamToken:
+    value: str
+
+    def encode(self, assembler_instance: "Assembler", offset: int):
+        word_size_bytes = assembler_instance.word_size_bytes
+        assembler_instance.symbol_table["refs"].setdefault(self.value, []).append(
+            len(assembler_instance.byte_code) + offset
+        )
+
+        return bytes(word_size_bytes)
+
+
+@dataclass
+class LabelOrInlineParamToken:
+    value: str
+
+    def encode(self, assembler_instance: "Assembler", offset: int):
+        if self.value.startswith("."):
+            return LabelParamToken(value=self.value)
+        else:
+            return InlineParamToken(value=self.value)
 
 
 @dataclass
@@ -63,7 +92,14 @@ class InstructionToken:
 
         byte_code.extend(inst_bytes)
         for param_token in self.params:
-            byte_code.extend(param_token.encode(assembler_instance=assembler_instance))
+            bytes_or_token = param_token
+            while not isinstance(bytes_or_token, bytes):
+                # TODO: ADD MAX DEPTH ERROR
+                bytes_or_token = bytes_or_token.encode(
+                    assembler_instance=assembler_instance, offset=len(byte_code)
+                )
+
+            byte_code.extend(bytes_or_token)
 
         return bytes(byte_code)
 
@@ -80,21 +116,47 @@ INSTRUCTIONS_META = {
     InstructionCodes.LOADA: GenericOneInlineParamIns,
     InstructionCodes.LOADB: GenericOneInlineParamIns,
     InstructionCodes.ADD: InstructionMeta(),
+    InstructionCodes.JMP: InstructionMeta(params=[LabelOrInlineParamToken]),
     InstructionCodes.HALT: InstructionMeta(),
 }
 
 
 @dataclass
 class MacroMeta:
-    num_params: int = 0
+    params: Sequence[type[AssemblerParamToken]] = field(default_factory=list)
 
 
-MACROS_META = {"LABEL": MacroMeta(num_params=1)}
+@dataclass
+class SetLabelParamToken:
+    value: str
+
+    def encode(self, assembler_instance: "Assembler"):
+        pass
+
+
+@dataclass
+class SetLabelToken:
+    params: Sequence[AssemblerParamToken]
+
+    def encode(self, assembler_instance: "Assembler") -> None:
+        assembler_instance.symbol_table["map"][self.params[0].value] = len(
+            assembler_instance.byte_code
+        )
+
+
+MACROS_META = {"LABEL": (SetLabelToken, MacroMeta(params=[SetLabelParamToken]))}
 
 TEST_PROG = """
 # 16-bit word tests
 
-LABEL START: NOP
+LABEL .START: NOP
+
+# JMP .END
+
+# JMP 46 
+
+JMP .ONE_ADD
+
 # No overflow or carry
 LOADA 0xFFFD
 LOADB 0x0002
@@ -110,11 +172,13 @@ LOADA 0x7fff
 LOADB 0x0001
 ADD
 
+LABEL .ONE_ADD:
 # Ex. Carry but no Signed overflow 00x8001 (-32767) + 0x7fff (32767) and zero flag
 LOADA 0x8001
 LOADB 0x7fff
 ADD
 
+LABEL .END:
 HALT
 """
 
@@ -128,7 +192,7 @@ class Assembler:
         self._reset_state()
 
     def _reset_state(self):
-        pass
+        self.symbol_table = {"map": {}, "refs": {}}
 
     def load_program(self, program_text):
         self._reset_state()
@@ -160,17 +224,43 @@ class Assembler:
                 assembler_tokens.append(
                     InstructionToken(code=code, params=param_values)
                 )
+            elif token in MACROS_META:
+                token_class, meta = MACROS_META[token]
+                param_values = []
+                for param_type in meta.params:
+                    next_token = next(tokens)
+                    param_values.append(param_type(value=next_token))
+
+                assembler_tokens.append(token_class(params=param_values))
 
         logger.debug(assembler_tokens)
         return assembler_tokens
 
     def assemble(self):
-        byte_code = bytearray()
+        self.byte_code = bytearray()
         for token in self.tokenize():
-            byte_code.extend(token.encode(assembler_instance=self))
+            if code_bytes := token.encode(assembler_instance=self):
+                self.byte_code.extend(code_bytes)
 
-        logger.debug(byte_code)
-        return byte_code
+        logger.debug(self.byte_code)
+        logger.debug(self.symbol_table)
+        return self.byte_code
+
+    def link(self):
+        for ref_label, ref_locations in self.symbol_table["refs"].items():
+            for location in ref_locations:
+                symbol_data = self.symbol_table["map"][ref_label]
+                for idx, singe_byte in enumerate(
+                    symbol_data.to_bytes(length=self.word_size_bytes)
+                ):
+                    self.byte_code[location + idx] = singe_byte
+
+        return self.byte_code
+
+    def compile(self):
+        self.assemble()
+        self.link()
+        return self.byte_code
 
 
 @dataclass
@@ -237,11 +327,12 @@ class CentralProcessingUnit:
             logger.debug(f"{self.FLAGS=}")
 
 
-def load(instance: CentralProcessingUnit, reg_name: str):
+def load(instance: CentralProcessingUnit, reg_name: str, ip_unmodified=False):
     bytes_val = instance.RAM[instance.IP : instance.IP + instance.word_in_bytes]
     val = int.from_bytes(bytes_val)
     setattr(instance, reg_name, val)
-    instance.IP += instance.word_in_bytes
+    if not ip_unmodified:
+        instance.IP += instance.word_in_bytes
 
 
 @CentralProcessingUnit.register_instruction(InstructionCodes.NOP)
@@ -294,6 +385,11 @@ def add_inst(instance: CentralProcessingUnit):
         instance.FLAGS.overflow = True
 
 
+@CentralProcessingUnit.register_instruction(InstructionCodes.JMP)
+def jump(instance: CentralProcessingUnit):
+    load(instance, "IP", ip_unmodified=True)
+
+
 @dataclass
 class VirtualMachine:
     memory: bytearray
@@ -323,7 +419,7 @@ class VirtualMachine:
     def load_program_at(self, address: int, program_text: str):
         self.assembler.load_program(program_text)
         logger.debug(f"Loaded {program_text=}")
-        byte_code = self.assembler.assemble()
+        byte_code = self.assembler.compile()
         self.load_at(address, byte_code)
 
     def run(self):
@@ -355,7 +451,6 @@ vm_instance = VirtualMachine(
     memory=memory, cpu=cpu_instance, assembler=assembler_instance
 )
 
-vm_instance.load_program_at(12, TEST_PROG)
-
+vm_instance.load_program_at(0, TEST_PROG)
 
 vm_instance.run()
