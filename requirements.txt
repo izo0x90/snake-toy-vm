@@ -1,0 +1,8 @@
+markdown-it-py==3.0.0
+mdurl==0.1.2
+nodeenv==1.9.1
+pygments==2.18.0
+pyright==1.1.386
+rich==13.9.3
+ruff==0.7.1
+typing-extensions==4.12.2
