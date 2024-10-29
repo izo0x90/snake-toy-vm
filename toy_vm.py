@@ -1,10 +1,17 @@
-from dataclasses import field, dataclass
+from dataclasses import asdict, field, dataclass
 from enum import Enum
-from typing import Callable, ClassVar, MutableMapping, Protocol, Self, Sequence
+import logging
+from typing import (
+    Callable,
+    ClassVar,
+    Generator,
+    MutableMapping,
+    Protocol,
+    Self,
+    Sequence,
+)
 
-import log
-
-logger = log.logging.getLogger(__name__)
+logger = logging.getLogger(__name__)
 
 HALT_INS_CODE = 0xFFFF
 WORD_SIZE = 16
@@ -155,7 +162,7 @@ LABEL .START: NOP
 
 # JMP 46 
 
-JMP .ONE_ADD
+# JMP .ONE_ADD
 
 # No overflow or carry
 LOADA 0xFFFD
@@ -272,15 +279,20 @@ class CPUFlags:
 
 
 @dataclass
-class CentralProcessingUnit:
-    HALT_INS_CODE: int
-    RAM: bytearray
-    FLAGS: CPUFlags
+class CPURegisters:
     IP: int = 0
     SP: int = 0
     IC: int = 0
     AA: int = 0
     AB: int = 0
+
+
+@dataclass
+class CentralProcessingUnit:
+    HALT_INS_CODE: int
+    RAM: bytearray
+    FLAGS: CPUFlags
+    REGISTERS: CPURegisters = field(default_factory=CPURegisters)
     WORD_SIZE_BITS: int = WORD_SIZE
     INSTRUCTION_MAP: ClassVar[
         MutableMapping[InstructionCodes, Callable[[Self], None]]
@@ -303,36 +315,40 @@ class CentralProcessingUnit:
         return self.word_in_bytes // 2
 
     def fetch(self):
-        next_ip = self.IP + self.word_in_bytes
-        self.IC = int.from_bytes(self.RAM[self.IP : next_ip])
-        self.IP = next_ip
+        next_ip = self.REGISTERS.IP + self.word_in_bytes
+        self.REGISTERS.IC = int.from_bytes(self.RAM[self.REGISTERS.IP : next_ip])
+        self.REGISTERS.IP = next_ip
 
     def reset(self):
         """TODO"""
 
     def exec(self):
-        inst_func = self.INSTRUCTION_MAP[InstructionCodes(self.IC)]
+        inst_func = self.INSTRUCTION_MAP[InstructionCodes(self.REGISTERS.IC)]
         inst_func(self)
 
     def run(self):
-        while not self.fetch() and self.IC != self.HALT_INS_CODE:
+        while not self.fetch() and self.REGISTERS.IC != self.HALT_INS_CODE:
             yield
             logger.debug("Running CPU step ...")
-            logger.debug(f"{hex(self.IC)=}")
+            logger.debug(f"{hex(self.REGISTERS.IC)=}")
             self.exec()
-            logger.debug(f"{InstructionCodes(self.IC)=}, {self.AA=}, {self.AB=}")
             logger.debug(
-                f"{InstructionCodes(self.IC)=}, {hex(self.AA)=}, {hex(self.AB)=}"
+                f"{InstructionCodes(self.REGISTERS.IC)=}, {self.REGISTERS.AA=}, {self.REGISTERS.AB=}"
+            )
+            logger.debug(
+                f"{InstructionCodes(self.REGISTERS.IC)=}, {hex(self.REGISTERS.AA)=}, {hex(self.REGISTERS.AB)=}"
             )
             logger.debug(f"{self.FLAGS=}")
 
 
 def load(instance: CentralProcessingUnit, reg_name: str, ip_unmodified=False):
-    bytes_val = instance.RAM[instance.IP : instance.IP + instance.word_in_bytes]
+    bytes_val = instance.RAM[
+        instance.REGISTERS.IP : instance.REGISTERS.IP + instance.word_in_bytes
+    ]
     val = int.from_bytes(bytes_val)
-    setattr(instance, reg_name, val)
+    setattr(instance.REGISTERS, reg_name, val)
     if not ip_unmodified:
-        instance.IP += instance.word_in_bytes
+        instance.REGISTERS.IP += instance.word_in_bytes
 
 
 @CentralProcessingUnit.register_instruction(InstructionCodes.NOP)
@@ -358,25 +374,25 @@ def add_inst(instance: CentralProcessingUnit):
     instance.FLAGS.zero = False
 
     sign_bit_mask = 1 << (instance.WORD_SIZE_BITS - 1)
-    sign_bit_A = instance.AA & sign_bit_mask
-    sign_bit_B = instance.AB & sign_bit_mask
+    sign_bit_A = instance.REGISTERS.AA & sign_bit_mask
+    sign_bit_B = instance.REGISTERS.AB & sign_bit_mask
 
-    instance.AA = instance.AA + instance.AB
+    instance.REGISTERS.AA = instance.REGISTERS.AA + instance.REGISTERS.AB
     try:
-        instance.AA.to_bytes(length=instance.word_in_bytes)
+        instance.REGISTERS.AA.to_bytes(length=instance.word_in_bytes)
     except OverflowError:
         # If result is too big to fit the A register set carry bit
         # Ex. 0xFFFF + 0xFFFF
         instance.FLAGS.carry = True
-        instance.AA = instance.AA - (2**instance.WORD_SIZE_BITS)
+        instance.REGISTERS.AA = instance.REGISTERS.AA - (2**instance.WORD_SIZE_BITS)
 
-    sign_bit_result = instance.AA & sign_bit_mask
+    sign_bit_result = instance.REGISTERS.AA & sign_bit_mask
 
     # Is MSB of result set, aka. result could be negative if on overflow
     instance.FLAGS.signed = bool(sign_bit_result)
 
     # Is result exactly zero (ignoring carry and overflow)
-    instance.FLAGS.zero = instance.AA == 0
+    instance.FLAGS.zero = instance.REGISTERS.AA == 0
 
     if sign_bit_A == sign_bit_B and sign_bit_A != sign_bit_result:
         # If the result has incorrect sign for two's compliment numbers set overflow
@@ -395,6 +411,34 @@ class VirtualMachine:
     memory: bytearray
     cpu: CentralProcessingUnit
     assembler: Assembler
+    current_run: Generator
+    clock_speed_hz: int = 1
+    _ellapsed_since_last: float = 0
+
+    def __post_init(self):
+        self.restart()
+
+    def get_registers(self):
+        return asdict(self.cpu.REGISTERS)
+
+    def get_program_text(self):
+        return self.assembler.text
+
+    def get_current_instruction_address(self):
+        return self.cpu.REGISTERS.IP
+
+    def get_video_memory(self):
+        # Place holder until video memory gets implemented
+        bytes_data = bytearray(640 * 400 * 3)
+        for y in range(0, 400):
+            for x in range(0, 640, 1):
+                row = (640 * 3) * y
+                col = x * 3
+                bytes_data[row + col] = (x ^ y) % 255
+                bytes_data[row + col + 1] = 0
+                bytes_data[row + col + 2] = 0
+
+        return bytes_data
 
     def load_at(self, address: int, data: bytearray, force=False):
         data_len = len(data)
@@ -422,35 +466,53 @@ class VirtualMachine:
         byte_code = self.assembler.compile()
         self.load_at(address, byte_code)
 
+    def restart(self):
+        self.cpu.reset()
+        self.current_run = self.cpu.run()
+        self.cpu.REGISTERS.SP = len(self.memory) - 1
+
+    def step(self, milli_sec_since_last: int):
+        self._ellapsed_since_last += milli_sec_since_last
+        if self._ellapsed_since_last < 1000 / self.clock_speed_hz:
+            return
+
+        self._ellapsed_since_last = 0
+        try:
+            next(self.current_run)
+        except StopIteration:
+            logger.debug("Current run halted")
+
     def run(self):
         for _ in self.cpu.run():
             logger.debug("Virtual machine ran step...\n\n")
 
 
-assembler_instance = Assembler(TEST_PROG, InstructionCodes, WORD_SIZE)
+if __name__ == "__main__":
+    assembler_instance = Assembler(TEST_PROG, InstructionCodes, WORD_SIZE)
 
-# byte_code = assembler.assemble()
-# memory = byte_code + bytearray((4 * 1024) - len(byte_code))
-memory = bytearray(4 * 1024)
-# memory[0] = 0x01
-# memory[1] = 0xFF
-# memory[2] = 0xFF
-# memory[3] = 0x02
-# memory[4] = 0x00
-# memory[5] = 0x02
-# memory[6] = 0x03
-# memory[10] = HALT_INS_CODE >> 8
-# memory[11] = HALT_INS_CODE - ((HALT_INS_CODE >> 8) << 8)
+    # byte_code = assembler.assemble()
+    # memory = byte_code + bytearray((4 * 1024) - len(byte_code))
+    memory = bytearray(4 * 1024)
+    # memory[0] = 0x01
+    # memory[1] = 0xFF
+    # memory[2] = 0xFF
+    # memory[3] = 0x02
+    # memory[4] = 0x00
+    # memory[5] = 0x02
+    # memory[6] = 0x03
+    # memory[10] = HALT_INS_CODE >> 8
+    # memory[11] = HALT_INS_CODE - ((HALT_INS_CODE >> 8) << 8)
 
+    cpu_instance = CentralProcessingUnit(
+        HALT_INS_CODE=HALT_INS_CODE,
+        RAM=memory,
+        FLAGS=CPUFlags(),
+    )
 
-cpu_instance = CentralProcessingUnit(
-    HALT_INS_CODE=HALT_INS_CODE, RAM=memory, FLAGS=CPUFlags(), SP=len(memory) - 1
-)
+    vm_instance = VirtualMachine(
+        memory=memory, cpu=cpu_instance, assembler=assembler_instance, current_run=None
+    )
 
-vm_instance = VirtualMachine(
-    memory=memory, cpu=cpu_instance, assembler=assembler_instance
-)
+    vm_instance.load_program_at(0, TEST_PROG)
 
-vm_instance.load_program_at(0, TEST_PROG)
-
-vm_instance.run()
+    vm_instance.run()
