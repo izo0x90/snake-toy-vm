@@ -11,3 +11,29 @@ A generalized toy virtual machine, assembler and debuger written in python. Inte
   - Swapping/ extending instruction sets
  
 *It's all virtual machines in virtual machins in virtual machines ... and soon Transformer models infrencing the output of virtual machines ... - Probaly someone*
+
+Install:
+- Clone repo
+- Install python 3.13 on system or virt. env.
+- Instal `uv` (Optional)
+```
+pip install uv
+```
+- Install deps
+```
+uv pip install -f requirements.txt
+```
+or
+```
+pip install -f requirements.txt
+```
+
+Run:
+- Load with only default "Toy VM" virtual machine
+```
+python main.py
+```
+- Load with addition virtual machines define in python modules
+```
+python main.py 8_bit_pic some_other_vm_module
+```
