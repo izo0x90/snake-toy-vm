@@ -1,24 +1,24 @@
 from dataclasses import asdict, field, dataclass
-from enum import Enum
 import logging
 from typing import (
     Callable,
     ClassVar,
     Generator,
     MutableMapping,
-    Protocol,
     Self,
     Sequence,
 )
+
+import vm_types
+import virtual_machine
 
 logger = logging.getLogger(__name__)
 
 HALT_INS_CODE = 0xFFFF
 WORD_SIZE = 16
-BITS_IN_BYTE = 8
 
 
-class InstructionCodes(Enum):
+class InstructionCodes(vm_types.GenericInstructionSet):
     NOP = 0x00
     LOADA = 0x1
     LOADB = 0x2
@@ -27,29 +27,11 @@ class InstructionCodes(Enum):
     HALT = HALT_INS_CODE
 
 
-class AssemblerToken(Protocol):
-    def encode(self, assembler_instance: "Assembler") -> bytes: ...
-
-
-class AssemblerParamToken(Protocol):
-    def __init__(self, value: str): ...
-
-    def encode(self, assembler_instance: "Assembler", offset: int) -> bytes: ...
-
-
-class AssemblerMetaParamToken(Protocol):
-    def __init__(self, value: str): ...
-
-    def encode(
-        self, assembler_instance: "Assembler", offset: int
-    ) -> AssemblerParamToken: ...
-
-
 @dataclass
 class InlineParamToken:
     value: str
 
-    def encode(self, assembler_instance: "Assembler", offset: int):
+    def encode(self, assembler_instance: vm_types.GenericAssembler, offset: int):
         word_size_bytes = assembler_instance.word_size_bytes
         base = 10
         match self.value[:2]:
@@ -65,7 +47,7 @@ class InlineParamToken:
 class LabelParamToken:
     value: str
 
-    def encode(self, assembler_instance: "Assembler", offset: int):
+    def encode(self, assembler_instance: vm_types.GenericAssembler, offset: int):
         word_size_bytes = assembler_instance.word_size_bytes
         assembler_instance.symbol_table["refs"].setdefault(self.value, []).append(
             len(assembler_instance.byte_code) + offset
@@ -78,7 +60,7 @@ class LabelParamToken:
 class LabelOrInlineParamToken:
     value: str
 
-    def encode(self, assembler_instance: "Assembler", offset: int):
+    def encode(self, assembler_instance: vm_types.GenericAssembler, offset: int):
         if self.value.startswith("."):
             return LabelParamToken(value=self.value)
         else:
@@ -88,9 +70,9 @@ class LabelOrInlineParamToken:
 @dataclass
 class InstructionToken:
     code: InstructionCodes
-    params: Sequence[AssemblerParamToken]
+    params: Sequence[vm_types.AssemblerParamToken]
 
-    def encode(self, assembler_instance: "Assembler") -> bytes:
+    def encode(self, assembler_instance: vm_types.GenericAssembler) -> bytes:
         byte_code = bytearray()
 
         inst_bytes = self.code.value.to_bytes(
@@ -113,7 +95,7 @@ class InstructionToken:
 
 @dataclass
 class InstructionMeta:
-    params: Sequence[type[AssemblerParamToken]] = field(default_factory=list)
+    params: Sequence[type[vm_types.AssemblerParamToken]] = field(default_factory=list)
 
 
 GenericOneInlineParamIns = InstructionMeta(params=[InlineParamToken])
@@ -130,22 +112,22 @@ INSTRUCTIONS_META = {
 
 @dataclass
 class MacroMeta:
-    params: Sequence[type[AssemblerParamToken]] = field(default_factory=list)
+    params: Sequence[type[vm_types.AssemblerParamToken]] = field(default_factory=list)
 
 
 @dataclass
 class SetLabelParamToken:
     value: str
 
-    def encode(self, assembler_instance: "Assembler"):
+    def encode(self, assembler_instance: vm_types.GenericAssembler):
         pass
 
 
 @dataclass
 class SetLabelToken:
-    params: Sequence[AssemblerParamToken]
+    params: Sequence[vm_types.AssemblerParamToken]
 
-    def encode(self, assembler_instance: "Assembler") -> None:
+    def encode(self, assembler_instance: vm_types.GenericAssembler) -> None:
         assembler_instance.symbol_table["map"][self.params[0].value] = len(
             assembler_instance.byte_code
         )
@@ -191,11 +173,16 @@ HALT
 
 
 class Assembler:
-    def __init__(self, program_text, instruction_codes, word_size):
+    def __init__(
+        self,
+        program_text,
+        instruction_codes: type[vm_types.GenericInstructionSet],
+        word_size,
+    ):
         self.text = program_text
         self.codes = instruction_codes
         self.word_size = word_size
-        self.word_size_bytes = word_size // BITS_IN_BYTE
+        self.word_size_bytes = word_size // vm_types.BITS_IN_BYTE
         self._reset_state()
 
     def _reset_state(self):
@@ -204,8 +191,9 @@ class Assembler:
     def load_program(self, program_text):
         self._reset_state()
         self.text = program_text
+        self.byte_code = bytearray()
 
-    def tokenize(self) -> Sequence[AssemblerToken]:
+    def tokenize(self) -> Sequence[vm_types.AssemblerToken]:
         partial_split_lines = self.text.split("\n")
         label_split_code_lines = []
         for line in partial_split_lines:
@@ -299,7 +287,7 @@ class CentralProcessingUnit:
     ] = {}
 
     @classmethod
-    def register_instruction(cls, inst_code):
+    def register_instruction(cls, inst_code) -> vm_types.DecoratorCallable:
         def decorator(f):
             cls.INSTRUCTION_MAP[inst_code] = f
             return f
@@ -307,11 +295,11 @@ class CentralProcessingUnit:
         return decorator
 
     @property
-    def word_in_bytes(self):
-        return self.WORD_SIZE_BITS // BITS_IN_BYTE
+    def word_in_bytes(self) -> int:
+        return self.WORD_SIZE_BITS // vm_types.BITS_IN_BYTE
 
     @property
-    def nible_in_bytes(self):
+    def nible_in_bytes(self) -> int:
         return self.word_in_bytes // 2
 
     def fetch(self):
@@ -320,13 +308,14 @@ class CentralProcessingUnit:
         self.REGISTERS.IP = next_ip
 
     def reset(self):
-        """TODO"""
+        self.REGISTERS = CPURegisters()
+        self.FLAGS = CPUFlags()
 
     def exec(self):
         inst_func = self.INSTRUCTION_MAP[InstructionCodes(self.REGISTERS.IC)]
         inst_func(self)
 
-    def run(self):
+    def run(self) -> Generator:
         while not self.fetch() and self.REGISTERS.IC != self.HALT_INS_CODE:
             yield
             logger.debug("Running CPU step ...")
@@ -339,6 +328,22 @@ class CentralProcessingUnit:
                 f"{InstructionCodes(self.REGISTERS.IC)=}, {hex(self.REGISTERS.AA)=}, {hex(self.REGISTERS.AB)=}"
             )
             logger.debug(f"{self.FLAGS=}")
+
+    def dump_registers(self):
+        return asdict(self.REGISTERS)
+
+    @property
+    def current_inst_address(self) -> int:
+        return self.REGISTERS.IP
+
+    @property
+    def current_stack_address(self) -> int:
+        return self.REGISTERS.SP
+
+    @current_stack_address.setter
+    def current_stack_address(self, address: int) -> int:
+        self.REGISTERS.SP = address
+        return self.REGISTERS.SP
 
 
 def load(instance: CentralProcessingUnit, reg_name: str, ip_unmodified=False):
@@ -406,93 +411,32 @@ def jump(instance: CentralProcessingUnit):
     load(instance, "IP", ip_unmodified=True)
 
 
-@dataclass
-class VirtualMachine:
-    memory: bytearray
-    cpu: CentralProcessingUnit
-    assembler: Assembler
-    current_run: Generator
-    clock_speed_hz: int = 1
-    _ellapsed_since_last: float = 0
+def instance_factory() -> vm_types.GenericVirtualMachine:
+    assembler_instance = Assembler(TEST_PROG, InstructionCodes, WORD_SIZE)
 
-    def __post_init(self):
-        self.restart()
+    memory = bytearray(4 * 1024)
 
-    def get_registers(self):
-        return asdict(self.cpu.REGISTERS)
+    cpu_instance = CentralProcessingUnit(
+        HALT_INS_CODE=HALT_INS_CODE,
+        RAM=memory,
+        FLAGS=CPUFlags(),
+    )
 
-    def get_program_text(self):
-        return self.assembler.text
+    vm_instance = virtual_machine.VirtualMachine(
+        memory=memory, cpu=cpu_instance, assembler=assembler_instance
+    )
 
-    def get_current_instruction_address(self):
-        return self.cpu.REGISTERS.IP
+    vm_instance.load_program_at(0, TEST_PROG)
+    vm_instance.restart()
 
-    def get_video_memory(self):
-        # Place holder until video memory gets implemented
-        bytes_data = bytearray(640 * 400 * 3)
-        for y in range(0, 400):
-            for x in range(0, 640, 1):
-                row = (640 * 3) * y
-                col = x * 3
-                bytes_data[row + col] = (x ^ y) % 255
-                bytes_data[row + col + 1] = 0
-                bytes_data[row + col + 2] = 0
-
-        return bytes_data
-
-    def load_at(self, address: int, data: bytearray, force=False):
-        data_len = len(data)
-        memory_len = len(self.memory)
-
-        if not force and address % self.cpu.word_in_bytes != 0:
-            raise Exception("TODO")
-
-        if address < 0 or (address + data_len - 1) >= memory_len:
-            raise Exception("TODO")
-
-        self.memory = (
-            self.memory[:address] + data + self.memory[address + data_len - 1 :]
-        )
-
-        self.cpu.RAM = self.memory
-
-        logger.debug(
-            f"Loaded data at {hex(address)=}\n" f"data=({self.memory[:102].hex()}...)"
-        )
-
-    def load_program_at(self, address: int, program_text: str):
-        self.assembler.load_program(program_text)
-        logger.debug(f"Loaded {program_text=}")
-        byte_code = self.assembler.compile()
-        self.load_at(address, byte_code)
-
-    def restart(self):
-        self.cpu.reset()
-        self.current_run = self.cpu.run()
-        self.cpu.REGISTERS.SP = len(self.memory) - 1
-
-    def step(self, milli_sec_since_last: int):
-        self._ellapsed_since_last += milli_sec_since_last
-        if self._ellapsed_since_last < 1000 / self.clock_speed_hz:
-            return
-
-        self._ellapsed_since_last = 0
-        try:
-            next(self.current_run)
-        except StopIteration:
-            logger.debug("Current run halted")
-
-    def run(self):
-        for _ in self.cpu.run():
-            logger.debug("Virtual machine ran step...\n\n")
+    return vm_instance
 
 
 if __name__ == "__main__":
     assembler_instance = Assembler(TEST_PROG, InstructionCodes, WORD_SIZE)
 
-    # byte_code = assembler.assemble()
-    # memory = byte_code + bytearray((4 * 1024) - len(byte_code))
     memory = bytearray(4 * 1024)
+    # Manual load test prog. in mem.
     # memory[0] = 0x01
     # memory[1] = 0xFF
     # memory[2] = 0xFF
@@ -503,16 +447,6 @@ if __name__ == "__main__":
     # memory[10] = HALT_INS_CODE >> 8
     # memory[11] = HALT_INS_CODE - ((HALT_INS_CODE >> 8) << 8)
 
-    cpu_instance = CentralProcessingUnit(
-        HALT_INS_CODE=HALT_INS_CODE,
-        RAM=memory,
-        FLAGS=CPUFlags(),
-    )
-
-    vm_instance = VirtualMachine(
-        memory=memory, cpu=cpu_instance, assembler=assembler_instance, current_run=None
-    )
-
-    vm_instance.load_program_at(0, TEST_PROG)
+    vm_instance = instance_factory()
 
     vm_instance.run()
