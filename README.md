@@ -11,7 +11,9 @@ A generalized toy virtual machine, assembler and debuger written in python. Inte
   - Swapping/ extending instruction sets
  
 *It's all virtual machines in virtual machins in virtual machines ... and soon Transformer models infrencing the output of virtual machines ... - Probaly someone*
-
+<p align="center">
+  <img src="screen_shot.png" width="500">
+</p>
 Install:
 - Clone repo
 - Install python 3.13 on system or virt. env.
