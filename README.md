@@ -17,17 +17,18 @@ A generalized toy virtual machine, assembler and debuger written in python. Inte
 Install:
 - Clone repo
 - Install python 3.13 on system or virt. env.
-- Instal `uv` (Optional)
+- Install `uv` (Optional)
+
 ```
 pip install uv
 ```
 - Install deps
 ```
-uv pip install -f requirements.txt
+uv pip install -r requirements.txt
 ```
 or
 ```
-pip install -f requirements.txt
+pip install -r requirements.txt
 ```
 
 Run:
