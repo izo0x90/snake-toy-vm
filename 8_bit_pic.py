@@ -339,7 +339,7 @@ class PICCentralProcessingUnit(vm_types.GenericCentralProcessingUnit):
 
     def fetch(self):
         next_ip = self.pc + self.word_in_bytes
-        self.ic = int.from_bytes(self.RAM[self.pc: next_ip])
+        self.ic = int.from_bytes(self.RAM[self.pc: next_ip], "big")
         self.pc = next_ip
 
     def reset(self):
@@ -363,7 +363,7 @@ class PICCentralProcessingUnit(vm_types.GenericCentralProcessingUnit):
         else:
             raise Exception(f"Unexpected instruction code 0x{self.ic:02x}.")
         ic_key = InstructionCodes(ic)
-        logger.debug(f"Executing {ic_key} (0x{self.ic:04x}))...")
+        logger.debug(f"Executing {ic_key.name} (0x{self.ic:04x}))...")
         inst_func = self.INSTRUCTION_MAP[ic_key]
         inst_func(self, self.ic)
 
@@ -386,11 +386,11 @@ class PICCentralProcessingUnit(vm_types.GenericCentralProcessingUnit):
 
     @property
     def current_stack_address(self) -> int:
-        return 0x00
+        return 0
 
     @current_stack_address.setter
     def current_stack_address(self, address: int) -> int:
-        return 0x00
+        return 0
 
 
 @PICCentralProcessingUnit.register_instruction(InstructionCodes.NOP)
