@@ -1,12 +1,15 @@
 from dataclasses import asdict, field, dataclass
+import functools
 import logging
 from typing import (
+    Any,
     Callable,
     ClassVar,
     Generator,
     MutableMapping,
     Self,
     Sequence,
+    Tuple,
 )
 
 import vm_types
@@ -23,7 +26,12 @@ class InstructionCodes(vm_types.GenericInstructionSet):
     LOADA = 0x1
     LOADB = 0x2
     ADD = 0x3
+    MLOADA = 0x4
+    MSTOREA = 0x5
+    MLOADB = 0x6
+    LOADIX = 0x7
     JMP = 0x10
+    JZ = 0x11
     HALT = HALT_INS_CODE
 
 
@@ -31,16 +39,37 @@ class InstructionCodes(vm_types.GenericInstructionSet):
 class InlineParamToken:
     value: str
 
-    def encode(self, assembler_instance: vm_types.GenericAssembler, offset: int):
+    def encode(
+        self, assembler_instance: vm_types.GenericAssembler, offset: int
+    ) -> bytes | bytearray:
         word_size_bytes = assembler_instance.word_size_bytes
-        base = 10
+        signed = False
         match self.value[:2]:
             case "0x":
                 base = 16
             case "0b":
                 base = 2
+            case _:
+                base = 10
+                if self.value.strip().startswith("-"):
+                    signed = True
 
-        return int(self.value, base).to_bytes(length=word_size_bytes)
+        return int(self.value, base).to_bytes(signed=signed, length=word_size_bytes)
+
+
+class MultiInlineParamToken(InlineParamToken):
+    value_list: Sequence[str]
+    value: str
+
+    def encode(self, assembler_instance: vm_types.GenericAssembler, offset: int):
+        byte_code = bytearray()
+        self.value_list = self.value.split(",")
+        for str_val in self.value_list:
+            self.value = str_val.strip()
+            byte_val = super().encode(assembler_instance, offset)
+            byte_code.extend(byte_val)
+
+        return byte_code
 
 
 @dataclass
@@ -82,7 +111,10 @@ class InstructionToken:
         byte_code.extend(inst_bytes)
         for param_token in self.params:
             bytes_or_token = param_token
-            while not isinstance(bytes_or_token, bytes):
+            while not (
+                isinstance(bytes_or_token, bytes)
+                or isinstance(bytes_or_token, bytearray)
+            ):
                 # TODO: ADD MAX DEPTH ERROR
                 bytes_or_token = bytes_or_token.encode(
                     assembler_instance=assembler_instance, offset=len(byte_code)
@@ -99,13 +131,19 @@ class InstructionMeta:
 
 
 GenericOneInlineParamIns = InstructionMeta(params=[InlineParamToken])
+GenericOneLabelOrInlineParamIns = InstructionMeta(params=[LabelOrInlineParamToken])
 
 INSTRUCTIONS_META = {
     InstructionCodes.NOP: InstructionMeta(),
     InstructionCodes.LOADA: GenericOneInlineParamIns,
+    InstructionCodes.MLOADA: GenericOneLabelOrInlineParamIns,
     InstructionCodes.LOADB: GenericOneInlineParamIns,
+    InstructionCodes.MLOADB: GenericOneLabelOrInlineParamIns,
+    InstructionCodes.LOADIX: GenericOneInlineParamIns,
+    InstructionCodes.MSTOREA: GenericOneLabelOrInlineParamIns,
     InstructionCodes.ADD: InstructionMeta(),
-    InstructionCodes.JMP: InstructionMeta(params=[LabelOrInlineParamToken]),
+    InstructionCodes.JMP: GenericOneLabelOrInlineParamIns,
+    InstructionCodes.JZ: GenericOneLabelOrInlineParamIns,
     InstructionCodes.HALT: InstructionMeta(),
 }
 
@@ -133,18 +171,57 @@ class SetLabelToken:
         )
 
 
-MACROS_META = {"LABEL": (SetLabelToken, MacroMeta(params=[SetLabelParamToken]))}
+@dataclass
+class DefineWordToken:
+    params: Sequence[vm_types.AssemblerParamToken]
+
+    def encode(self, assembler_instance: vm_types.GenericAssembler) -> bytes:
+        byte_code = bytearray()
+
+        for param_token in self.params:
+            bytes_or_token = param_token
+            while not (
+                isinstance(bytes_or_token, bytes)
+                or isinstance(bytes_or_token, bytearray)
+            ):
+                # TODO: ADD MAX DEPTH ERROR
+                bytes_or_token = bytes_or_token.encode(
+                    assembler_instance=assembler_instance, offset=len(byte_code)
+                )
+
+            byte_code.extend(bytes_or_token)
+
+        return bytes(byte_code)
+
+
+MACROS_META = {
+    "LABEL": (SetLabelToken, MacroMeta(params=[SetLabelParamToken])),
+    "DWORD": (DefineWordToken, MacroMeta(params=[MultiInlineParamToken])),
+}
 
 TEST_PROG = """
 # 16-bit word tests
 
+JMP .START
+LABEL .DATA
+DWORD 0xABAB,0xCDCD
+
 LABEL .START: NOP
+# Loop
+LOADA 0x000A
+LOADB -1
 
-# JMP .END
+LABEL .LOOP
+ADD
+JZ .END
+JMP .LOOP
 
-# JMP 46 
-
-# JMP .ONE_ADD
+# Memory loads
+MLOADA .END
+MLOADA .DATA
+LOADIX 0x0001
+MLOADB .DATA
+HALT
 
 # No overflow or carry
 LOADA 0xFFFD
@@ -259,6 +336,13 @@ class Assembler:
 
 
 @dataclass
+class AddressModes:
+    IMMEDIATE = 0
+    DIRECT = 1
+    DIRECT_INDEXED = 2
+
+
+@dataclass
 class CPUFlags:
     overflow: bool = False
     carry: bool = False
@@ -273,6 +357,7 @@ class CPURegisters:
     IC: int = 0
     AA: int = 0
     AB: int = 0
+    IX: int = 0
 
 
 @dataclass
@@ -288,7 +373,7 @@ class CentralProcessingUnit:
 
     @classmethod
     def register_instruction(cls, inst_code) -> vm_types.DecoratorCallable:
-        def decorator(f):
+        def decorator(f) -> Callable:
             cls.INSTRUCTION_MAP[inst_code] = f
             return f
 
@@ -345,12 +430,42 @@ class CentralProcessingUnit:
         self.REGISTERS.SP = address
         return self.REGISTERS.SP
 
+    @classmethod
+    def bind_to_registers(
+        cls, bind_list: Sequence[Tuple[InstructionCodes, dict[str, Any]]]
+    ) -> vm_types.DecoratorCallable:
+        def decorator(f: Callable) -> Callable:
+            for ins_code, kwargs in bind_list:
+                bound_func = functools.partial(f, **kwargs)
+                cls.register_instruction(ins_code)(bound_func)
+            return f
 
-def load(instance: CentralProcessingUnit, reg_name: str, ip_unmodified=False):
+        return decorator
+
+
+def load(
+    instance: CentralProcessingUnit,
+    reg_name: str,
+    ip_unmodified=False,
+    address_mode=AddressModes.IMMEDIATE,
+):
     bytes_val = instance.RAM[
         instance.REGISTERS.IP : instance.REGISTERS.IP + instance.word_in_bytes
     ]
     val = int.from_bytes(bytes_val)
+
+    match address_mode:
+        case AddressModes.IMMEDIATE:
+            pass
+        case AddressModes.DIRECT_INDEXED:
+            address = val + instance.REGISTERS.IX
+            val = int.from_bytes(
+                instance.RAM[address : address + instance.word_in_bytes]
+            )
+
+        case _:
+            raise ValueError(f"Unknown {address_mode=}")
+
     setattr(instance.REGISTERS, reg_name, val)
     if not ip_unmodified:
         instance.REGISTERS.IP += instance.word_in_bytes
@@ -361,14 +476,26 @@ def noop(instance: CentralProcessingUnit):
     pass
 
 
-@CentralProcessingUnit.register_instruction(InstructionCodes.LOADA)
-def load_A(instance: CentralProcessingUnit):
-    load(instance, "AA")
+@CentralProcessingUnit.bind_to_registers(
+    [
+        (InstructionCodes.LOADA, {"reg_name": "AA"}),
+        (InstructionCodes.LOADB, {"reg_name": "AB"}),
+        (InstructionCodes.LOADIX, {"reg_name": "IX"}),
+    ]
+)
+def load_immediate(instance: CentralProcessingUnit, reg_name: str):
+    load(instance, reg_name)
 
 
-@CentralProcessingUnit.register_instruction(InstructionCodes.LOADB)
-def load_B(instance: CentralProcessingUnit):
-    load(instance, "AB")
+@CentralProcessingUnit.bind_to_registers(
+    [
+        (InstructionCodes.MLOADA, {"reg_name": "AA"}),
+        (InstructionCodes.MLOADB, {"reg_name": "AB"}),
+        # (InstructionCodes.MLOADIX, {"reg_name": "IX"}),
+    ]
+)
+def mload_direct(instance: CentralProcessingUnit, reg_name: str):
+    load(instance, reg_name, address_mode=AddressModes.DIRECT_INDEXED)
 
 
 @CentralProcessingUnit.register_instruction(InstructionCodes.ADD)
@@ -411,6 +538,14 @@ def jump(instance: CentralProcessingUnit):
     load(instance, "IP", ip_unmodified=True)
 
 
+@CentralProcessingUnit.register_instruction(InstructionCodes.JZ)
+def jump_zero(instance: CentralProcessingUnit):
+    if instance.FLAGS.zero:
+        load(instance, "IP", ip_unmodified=True)
+    else:
+        instance.REGISTERS.IP += instance.word_in_bytes
+
+
 def instance_factory() -> vm_types.GenericVirtualMachine:
     assembler_instance = Assembler(TEST_PROG, InstructionCodes, WORD_SIZE)
 
@@ -433,6 +568,8 @@ def instance_factory() -> vm_types.GenericVirtualMachine:
 
 
 if __name__ == "__main__":
+    import log  # noqa
+
     assembler_instance = Assembler(TEST_PROG, InstructionCodes, WORD_SIZE)
 
     memory = bytearray(4 * 1024)

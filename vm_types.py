@@ -7,6 +7,7 @@ from typing import (
     Mapping,
     Protocol,
     Sequence,
+    Union,
 )
 
 BITS_IN_BYTE = 8
@@ -14,7 +15,7 @@ BITS_IN_BYTE = 8
 GenericInstructionSet = enum.Enum
 SizeInBytes = int
 RegistersDump = Mapping[str, int]
-DecoratorCallable = Callable[[Callable], None]
+DecoratorCallable = Callable[[Callable], Callable]
 
 
 class GenericAssembler(Protocol):
@@ -49,7 +50,9 @@ class AssemblerToken(Protocol):
 class AssemblerParamToken(Protocol):
     def __init__(self, value: str): ...
 
-    def encode(self, assembler_instance: GenericAssembler, offset: int) -> bytes: ...
+    def encode(
+        self, assembler_instance: GenericAssembler, offset: int
+    ) -> Union[bytes, bytearray, "AssemblerParamToken"]: ...
 
 
 class AssemblerMetaParamToken(Protocol):
@@ -118,9 +121,9 @@ class GenericVirtualMachine(Protocol):
     stack_address: int | None
     clock_speed_hz: int = 1
 
-    def get_registers(self): ...
+    def get_registers(self) -> Mapping: ...
 
-    def get_program_text(self): ...
+    def get_program_text(self) -> str: ...
 
     def get_current_instruction_address(self): ...
 
