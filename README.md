@@ -2,10 +2,11 @@
   <img src="logo2.png" width="820">
 </p>
 
-# Snake toy VM
+# Snake toy VM :snake:
 
-A generalized toy virtual machine, assembler and debuger written in python. Intended as just a fun time waster over a few weekends for myself, and also somehow we dragged in [@zayfod](https://github.com/zayfod) into this too, but maybe there is some educational value to others?
-- Keeping things simple, illustrating basic ideas behind classical computing, emulation and VMs.
+A generalized toy virtual machine, assembler, debugger/ UI written in python. Intended as just a fun time waster over a few weekends for myself, and also somehow we dragged in [@zayfod](https://github.com/zayfod) into this too, but maybe there is some educational value to others?
+
+- Keeping things simple, illustrating basic ideas behind classical computing, emulation and VMs
 - Modular
   - Allows for definition of custom assembly sytaxes
   - Swapping/ extending instruction sets
@@ -16,9 +17,13 @@ A generalized toy virtual machine, assembler and debuger written in python. Inte
   - 8 bit PIC (In progress)
  
 *It's all virtual machines in virtual machins in virtual machines ... and soon Transformer models infrencing the output of virtual machines ... - Probaly someone*
+
 <p align="center">
   <img src="screen_shot.png" width="500">
 </p>
+
+## Why?
+Writing a VM in a language that runs in a VM and has no business having a VM written in :feelsgood:! Possibly educational for someone :suspect:? If you grew up learning to code in the 90's you get it.
 
 ## Install
 
