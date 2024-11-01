@@ -1,3 +1,20 @@
+"""
+F-4 MISC 16 bit implementation
+instruction	opcode	operand	        operation	            clocks
+ADDi imm      00 01	16 bit value	imm+(A) --> A       	3
+ADDm addr     00 02	16 bit address	(addr)+(A) --> A    	4
+ADDpc         00 04	null operand	PC+(A) --> A        	3
+BVS addr      00 08	16 bit address	(addr) --> PC if <v>=1	3
+LDAi imm      00 10	16 bit value	imm --> A	            3
+LDAm addr     00 20	16 bit address	(addr) --> A	        3
+LDApc         00 40	null operand	PC --> A	            3
+STAm addr     00 80	16 bit address	A --> (addr)	        3
+STApc PC      01 00	null operand	A --> PC	            3
+
+References:
+    http://www.dakeng.com/misc.html
+"""
+
 from dataclasses import asdict, field, dataclass
 import functools
 import logging
@@ -7,14 +24,15 @@ from typing import (
     ClassVar,
     Generator,
     MutableMapping,
+    Optional,
     Self,
     Sequence,
     Tuple,
 )
 
-from toy_assembler import Assembler
 import vm_types
 import virtual_machine
+from toy_assembler import Assembler
 
 logger = logging.getLogger(__name__)
 
@@ -23,16 +41,15 @@ WORD_SIZE = 16
 
 
 class InstructionCodes(vm_types.GenericInstructionSet):
-    NOP = 0x00
-    LOADA = 0x1
-    LOADB = 0x2
-    ADD = 0x3
-    MLOADA = 0x4
-    MSTOREA = 0x5
-    MLOADB = 0x6
-    LOADIX = 0x7
-    JMP = 0x10
-    JZ = 0x11
+    ADDi = 1
+    ADDm = 2
+    ADDpc = 4
+    BVS = 8
+    LDAi = 10
+    LDAm = 20
+    LDApc = 40
+    STAm = 80
+    STApc = 100
     HALT = HALT_INS_CODE
 
 
@@ -58,21 +75,6 @@ class InlineParamToken:
         return int(self.value, base).to_bytes(signed=signed, length=word_size_bytes)
 
 
-class MultiInlineParamToken(InlineParamToken):
-    value_list: Sequence[str]
-    value: str
-
-    def encode(self, assembler_instance: vm_types.GenericAssembler, offset: int):
-        byte_code = bytearray()
-        self.value_list = self.value.split(",")
-        for str_val in self.value_list:
-            self.value = str_val.strip()
-            byte_val = super().encode(assembler_instance, offset)
-            byte_code.extend(byte_val)
-
-        return byte_code
-
-
 @dataclass
 class LabelParamToken:
     value: str
@@ -95,6 +97,21 @@ class LabelOrInlineParamToken:
             return LabelParamToken(value=self.value)
         else:
             return InlineParamToken(value=self.value)
+
+
+class MultiInlineParamToken(InlineParamToken):
+    value_list: Sequence[str]
+    value: str
+
+    def encode(self, assembler_instance: vm_types.GenericAssembler, offset: int):
+        byte_code = bytearray()
+        self.value_list = self.value.split(",")
+        for str_val in self.value_list:
+            self.value = str_val.strip()
+            byte_val = super().encode(assembler_instance, offset)
+            byte_code.extend(byte_val)
+
+        return byte_code
 
 
 @dataclass
@@ -132,22 +149,22 @@ class InstructionMeta:
     params: Sequence[type[vm_types.AssemblerParamToken]] = field(default_factory=list)
 
 
-GenericOneInlineParamIns = InstructionMeta(params=[InlineParamToken])
 GenericOneLabelOrInlineParamIns = InstructionMeta(params=[LabelOrInlineParamToken])
 
-INSTRUCTIONS_META = {
-    InstructionCodes.NOP: InstructionMeta(),
-    InstructionCodes.LOADA: GenericOneInlineParamIns,
-    InstructionCodes.MLOADA: GenericOneLabelOrInlineParamIns,
-    InstructionCodes.LOADB: GenericOneInlineParamIns,
-    InstructionCodes.MLOADB: GenericOneLabelOrInlineParamIns,
-    InstructionCodes.LOADIX: GenericOneInlineParamIns,
-    InstructionCodes.MSTOREA: GenericOneLabelOrInlineParamIns,
-    InstructionCodes.ADD: InstructionMeta(),
-    InstructionCodes.JMP: GenericOneLabelOrInlineParamIns,
-    InstructionCodes.JZ: GenericOneLabelOrInlineParamIns,
-    InstructionCodes.HALT: InstructionMeta(),
-}
+
+class InstructionsMeta:
+    def __getitem__(self, key):
+        try:
+            inst = InstructionCodes(key)
+            if inst in (
+                InstructionCodes.HALT,
+                InstructionCodes.LDApc,
+                InstructionCodes.STApc,
+            ):
+                return InstructionMeta()
+            return GenericOneLabelOrInlineParamIns
+        except ValueError:
+            raise ValueError(f"Unrecognized instruction with mnemonic {key}")
 
 
 @dataclass
@@ -202,52 +219,29 @@ MACROS_META = {
 }
 
 TEST_PROG = """
-# 16-bit word tests
+# F-4 16-bit word tests
+# Code examples from source listed in module comments
+LABEL   .START:
+        LDAi .FIRST_JUMP
+        STApc
 
-JMP .START
-LABEL .DATA:
-DWORD 0xABAB,0xCDCD
+LABEL   .NUMBER:
+DWORD   0b1000_0000_0000_0001,0xFFFF
 
-LABEL .START: NOP
-# Loop
-LOADA 0x000A
-LOADB -1
+LABEL   .FIRST_JUMP:
+# SHL (arithmetic shift left) is a quick addition of a number to itself.
+# The overflow flag is set if the bit shifted out is 1, clear if it's 0.
+        LDAm .NUMBER
+        ADDm .NUMBER
+        STAm .NUMBER
 
-LABEL .LOOP
-ADD
-JZ .END
-JMP .LOOP
+# Branch overflow on first add, exit second
+        LDAi 0xFFFF
+LABEL   .BRANCH_OV:
+        ADDi 1
+        BVS .BRANCH_OV
 
-# Memory loads
-MLOADA .END
-MLOADA .DATA
-LOADIX 0x0001
-MLOADB .DATA
-HALT
-
-# No overflow or carry
-LOADA 0xFFFD
-LOADB 0x0002
-ADD
-
-# Signed overflow and carry
-LOADA 0x8000
-LOADB 0xffff
-ADD
-
-# Ex. Signed overflow 0x7fff (32767) + 0x0001 (1) and signed flag
-LOADA 0x7fff
-LOADB 0x0001
-ADD
-
-LABEL .ONE_ADD:
-# Ex. Carry but no Signed overflow 00x8001 (-32767) + 0x7fff (32767) and zero flag
-LOADA 0x8001
-LOADB 0x7fff
-ADD
-
-LABEL .END:
-HALT
+        HALT
 """
 
 
@@ -255,25 +249,20 @@ HALT
 class AddressModes:
     IMMEDIATE = 0
     DIRECT = 1
-    DIRECT_INDEXED = 2
+    REGISTER = 2
 
 
 @dataclass
 class CPUFlags:
     overflow: bool = False
-    carry: bool = False
-    signed: bool = False
-    zero: bool = False
 
 
 @dataclass
 class CPURegisters:
-    IP: int = 0
-    SP: int = 0
+    PC: int = 0
+    A: int = 0
     IC: int = 0
-    AA: int = 0
-    AB: int = 0
-    IX: int = 0
+    HIDDEN: int = 0
 
 
 @dataclass
@@ -304,30 +293,26 @@ class CentralProcessingUnit:
         return self.word_in_bytes // 2
 
     def fetch(self):
-        next_ip = self.REGISTERS.IP + self.word_in_bytes
-        self.REGISTERS.IC = int.from_bytes(self.RAM[self.REGISTERS.IP : next_ip])
-        self.REGISTERS.IP = next_ip
+        next_ip = self.REGISTERS.PC + self.word_in_bytes
+        self.REGISTERS.IC = int.from_bytes(self.RAM[self.REGISTERS.PC : next_ip])
+        self.REGISTERS.PC = next_ip
 
     def reset(self):
         self.REGISTERS = CPURegisters()
         self.FLAGS = CPUFlags()
 
     def exec(self):
-        inst_func = self.INSTRUCTION_MAP[InstructionCodes(self.REGISTERS.IC)]
+        inst_code = InstructionCodes(self.REGISTERS.IC)
+        logger.debug(f"Instruction: {inst_code}")
+        inst_func = self.INSTRUCTION_MAP[inst_code]
         inst_func(self)
 
     def run(self) -> Generator:
         while not self.fetch() and self.REGISTERS.IC != self.HALT_INS_CODE:
             yield
             logger.debug("Running CPU step ...")
-            logger.debug(f"{hex(self.REGISTERS.IC)=}")
             self.exec()
-            logger.debug(
-                f"{InstructionCodes(self.REGISTERS.IC)=}, {self.REGISTERS.AA=}, {self.REGISTERS.AB=}"
-            )
-            logger.debug(
-                f"{InstructionCodes(self.REGISTERS.IC)=}, {hex(self.REGISTERS.AA)=}, {hex(self.REGISTERS.AB)=}"
-            )
+            logger.debug(f"{self.REGISTERS=}")
             logger.debug(f"{self.FLAGS=}")
 
     def dump_registers(self):
@@ -335,16 +320,15 @@ class CentralProcessingUnit:
 
     @property
     def current_inst_address(self) -> int:
-        return self.REGISTERS.IP
+        return self.REGISTERS.PC
 
     @property
     def current_stack_address(self) -> int:
-        return self.REGISTERS.SP
+        return len(self.RAM)
 
     @current_stack_address.setter
     def current_stack_address(self, address: int) -> int:
-        self.REGISTERS.SP = address
-        return self.REGISTERS.SP
+        return self.current_stack_address
 
     @classmethod
     def bind_to_registers(
@@ -362,109 +346,137 @@ class CentralProcessingUnit:
 def load(
     instance: CentralProcessingUnit,
     reg_name: str,
+    *,
+    source_reg_name: Optional[str] = None,
     ip_unmodified=False,
     address_mode=AddressModes.IMMEDIATE,
 ):
     bytes_val = instance.RAM[
-        instance.REGISTERS.IP : instance.REGISTERS.IP + instance.word_in_bytes
+        instance.REGISTERS.PC : instance.REGISTERS.PC + instance.word_in_bytes
     ]
     val = int.from_bytes(bytes_val)
 
     match address_mode:
         case AddressModes.IMMEDIATE:
             pass
-        case AddressModes.DIRECT_INDEXED:
-            address = val + instance.REGISTERS.IX
+        case AddressModes.DIRECT:
+            address = val
             val = int.from_bytes(
                 instance.RAM[address : address + instance.word_in_bytes]
             )
+        case AddressModes.REGISTER:
+            if not source_reg_name:
+                raise ValueError("Missing source register name")
+            val = getattr(instance.REGISTERS, source_reg_name)
+            ip_unmodified = True
 
         case _:
             raise ValueError(f"Unknown {address_mode=}")
 
     setattr(instance.REGISTERS, reg_name, val)
     if not ip_unmodified:
-        instance.REGISTERS.IP += instance.word_in_bytes
+        instance.REGISTERS.PC += instance.word_in_bytes
 
 
-@CentralProcessingUnit.register_instruction(InstructionCodes.NOP)
-def noop(instance: CentralProcessingUnit):
-    pass
+def store(
+    instance: CentralProcessingUnit,
+    source_reg_name: str,
+    *,
+    dest_reg_name: Optional[str] = None,
+    address_mode=AddressModes.IMMEDIATE,
+):
+    val = getattr(instance.REGISTERS, source_reg_name)
+
+    match address_mode:
+        case AddressModes.DIRECT:
+            val = val.to_bytes(length=instance.word_in_bytes)
+            bytes_val = instance.RAM[
+                instance.REGISTERS.PC : instance.REGISTERS.PC + instance.word_in_bytes
+            ]
+            address = int.from_bytes(bytes_val)
+
+            for idx in range(instance.word_in_bytes):
+                instance.RAM[address + idx] = val[idx]
+
+            instance.REGISTERS.PC += instance.word_in_bytes
+        case AddressModes.REGISTER:
+            if not dest_reg_name:
+                raise ValueError("Missing destination register name")
+            setattr(instance.REGISTERS, dest_reg_name, val)
+
+        case _:
+            raise ValueError(f"Unknown {address_mode=}")
 
 
-@CentralProcessingUnit.bind_to_registers(
-    [
-        (InstructionCodes.LOADA, {"reg_name": "AA"}),
-        (InstructionCodes.LOADB, {"reg_name": "AB"}),
-        (InstructionCodes.LOADIX, {"reg_name": "IX"}),
-    ]
-)
-def load_immediate(instance: CentralProcessingUnit, reg_name: str):
-    load(instance, reg_name)
-
-
-@CentralProcessingUnit.bind_to_registers(
-    [
-        (InstructionCodes.MLOADA, {"reg_name": "AA"}),
-        (InstructionCodes.MLOADB, {"reg_name": "AB"}),
-        # (InstructionCodes.MLOADIX, {"reg_name": "IX"}),
-    ]
-)
-def mload_direct(instance: CentralProcessingUnit, reg_name: str):
-    load(instance, reg_name, address_mode=AddressModes.DIRECT_INDEXED)
-
-
-@CentralProcessingUnit.register_instruction(InstructionCodes.ADD)
-def add_inst(instance: CentralProcessingUnit):
-    instance.FLAGS.carry = False
+def add(
+    instance: CentralProcessingUnit,
+    source_reg_name: Optional[str] = None,
+    *,
+    address_mode=AddressModes.IMMEDIATE,
+):
     instance.FLAGS.overflow = False
-    instance.FLAGS.signed = False
-    instance.FLAGS.zero = False
-
-    sign_bit_mask = 1 << (instance.WORD_SIZE_BITS - 1)
-    sign_bit_A = instance.REGISTERS.AA & sign_bit_mask
-    sign_bit_B = instance.REGISTERS.AB & sign_bit_mask
-
-    instance.REGISTERS.AA = instance.REGISTERS.AA + instance.REGISTERS.AB
-    try:
-        instance.REGISTERS.AA.to_bytes(length=instance.word_in_bytes)
-    except OverflowError:
-        # If result is too big to fit the A register set carry bit
-        # Ex. 0xFFFF + 0xFFFF
-        instance.FLAGS.carry = True
-        instance.REGISTERS.AA = instance.REGISTERS.AA - (2**instance.WORD_SIZE_BITS)
-
-    sign_bit_result = instance.REGISTERS.AA & sign_bit_mask
-
-    # Is MSB of result set, aka. result could be negative if on overflow
-    instance.FLAGS.signed = bool(sign_bit_result)
-
-    # Is result exactly zero (ignoring carry and overflow)
-    instance.FLAGS.zero = instance.REGISTERS.AA == 0
-
-    if sign_bit_A == sign_bit_B and sign_bit_A != sign_bit_result:
-        # If the result has incorrect sign for two's compliment numbers set overflow
-        # Ex. 0x8000 (-32768) + 0xFFFF (-1)
-        # Ex. 0x7fff (32767) + 0x0001 (1)
-        instance.FLAGS.overflow = True
+    load(instance, "HIDDEN", source_reg_name=source_reg_name, address_mode=address_mode)
+    val = instance.REGISTERS.HIDDEN + instance.REGISTERS.A
+    instance.REGISTERS.A = val & 0xFFFF
+    instance.FLAGS.overflow = bool((val & 0x010000))
 
 
-@CentralProcessingUnit.register_instruction(InstructionCodes.JMP)
-def jump(instance: CentralProcessingUnit):
-    load(instance, "IP", ip_unmodified=True)
+@CentralProcessingUnit.register_instruction(InstructionCodes.LDAi)
+def loada_i(instance: CentralProcessingUnit):
+    load(instance, "A")
 
 
-@CentralProcessingUnit.register_instruction(InstructionCodes.JZ)
-def jump_zero(instance: CentralProcessingUnit):
-    if instance.FLAGS.zero:
-        load(instance, "IP", ip_unmodified=True)
+@CentralProcessingUnit.register_instruction(InstructionCodes.LDAm)
+def loada_m(instance: CentralProcessingUnit):
+    load(instance, "A", address_mode=AddressModes.DIRECT)
+
+
+@CentralProcessingUnit.register_instruction(InstructionCodes.LDApc)
+def loada_pc(instance: CentralProcessingUnit):
+    load(instance, "A", source_reg_name="PC", address_mode=AddressModes.REGISTER)
+
+
+@CentralProcessingUnit.register_instruction(InstructionCodes.STAm)
+def staa_m(instance: CentralProcessingUnit):
+    store(instance, source_reg_name="A", address_mode=AddressModes.DIRECT)
+
+
+@CentralProcessingUnit.register_instruction(InstructionCodes.STApc)
+def staa_pc(instance: CentralProcessingUnit):
+    store(
+        instance,
+        source_reg_name="A",
+        dest_reg_name="PC",
+        address_mode=AddressModes.REGISTER,
+    )
+
+
+@CentralProcessingUnit.register_instruction(InstructionCodes.BVS)
+def branch_if_overflow(instance: CentralProcessingUnit):
+    if instance.FLAGS.overflow:
+        load(instance, "PC", ip_unmodified=True)
     else:
-        instance.REGISTERS.IP += instance.word_in_bytes
+        instance.REGISTERS.PC += instance.word_in_bytes
+
+
+@CentralProcessingUnit.register_instruction(InstructionCodes.ADDi)
+def add_inst(instance: CentralProcessingUnit):
+    add(instance, address_mode=AddressModes.IMMEDIATE)
+
+
+@CentralProcessingUnit.register_instruction(InstructionCodes.ADDm)
+def add_m(instance: CentralProcessingUnit):
+    add(instance, address_mode=AddressModes.DIRECT)
+
+
+@CentralProcessingUnit.register_instruction(InstructionCodes.ADDpc)
+def add_pc(instance: CentralProcessingUnit):
+    add(instance, source_reg_name="PC", address_mode=AddressModes.DIRECT)
 
 
 def instance_factory() -> vm_types.GenericVirtualMachine:
     assembler_instance = Assembler(
-        TEST_PROG, InstructionCodes, WORD_SIZE, INSTRUCTIONS_META, MACROS_META
+        TEST_PROG, InstructionCodes, WORD_SIZE, InstructionsMeta(), MACROS_META
     )
 
     memory = bytearray(4 * 1024)
@@ -488,16 +500,7 @@ def instance_factory() -> vm_types.GenericVirtualMachine:
 if __name__ == "__main__":
     import log  # noqa
 
-    # Manual load test prog. in mem.
-    # memory[0] = 0x01
-    # memory[1] = 0xFF
-    # memory[2] = 0xFF
-    # memory[3] = 0x02
-    # memory[4] = 0x00
-    # memory[5] = 0x02
-    # memory[6] = 0x03
-    # memory[10] = HALT_INS_CODE >> 8
-    # memory[11] = HALT_INS_CODE - ((HALT_INS_CODE >> 8) << 8)
+    memory = bytearray(4 * 1024)
 
     vm_instance = instance_factory()
 

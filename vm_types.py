@@ -23,12 +23,16 @@ class GenericAssembler(Protocol):
     symbol_table: dict[str, Any]
     byte_code: bytearray
     text: str
+    instructions_meta: Mapping[str, Callable]
+    macros_meta: Mapping[str, Callable]
 
     def __init__(
         self,
         program_text: str,
         instruction_codes: type[GenericInstructionSet],
         word_size: SizeInBytes,
+        instructions_meta: Mapping[str, Callable],
+        macros_meta: Mapping[str, Callable],
     ): ...
 
     def load_program(self, program_text: str):
