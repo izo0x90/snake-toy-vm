@@ -26,6 +26,7 @@ from typing import (
     Callable,
     ClassVar,
     Generator,
+    Mapping,
     MutableMapping,
     Self,
     Sequence,
@@ -52,6 +53,7 @@ class InstructionCodes(vm_types.GenericInstructionSet):
 
 class LabelToken(vm_types.AssemblerToken):
     """Label token."""
+
     def __init__(self, label: str) -> None:
         super().__init__()
         self.label = label
@@ -60,14 +62,13 @@ class LabelToken(vm_types.AssemblerToken):
         return f"Label('{self.label}')"
 
     def encode(self, assembler: vm_types.GenericAssembler) -> bytes:
-        assembler.symbol_table["map"][self.label] = len(
-            assembler.byte_code
-        )
+        assembler.symbol_table["map"][self.label] = len(assembler.byte_code)
         return b""
 
 
 class ByteOpToken(vm_types.AssemblerToken):
     """Byte-oriented file register operation token."""
+
     def __init__(self, inst: str, op: int, f: str, d: str) -> None:
         super().__init__()
         self.inst = str(inst)
@@ -79,14 +80,15 @@ class ByteOpToken(vm_types.AssemblerToken):
         return f"{self.inst}(f={self.f}, d={self.d})"
 
     def encode(self, assembler: vm_types.GenericAssembler) -> bytes:
-        f = resolve_int_value(assembler, self.f, 0x7f)
+        f = resolve_int_value(assembler, self.f, 0x7F)
         d = resolve_int_value(assembler, self.d, 0x1)
         code = self.op | (d << 7) | f
-        return code.to_bytes(2, 'big')
+        return code.to_bytes(2, "big")
 
 
 class NOPToken(ByteOpToken):
     """No operation token."""
+
     def __init__(self) -> None:
         super().__init__("NOP", 0x0000, "0", "0")
 
@@ -96,6 +98,7 @@ class NOPToken(ByteOpToken):
 
 class MOVWFToken(ByteOpToken):
     """Move W to f token."""
+
     def __init__(self, f: str) -> None:
         super().__init__("MOVWF", 0x0080, f, "1")
 
@@ -105,6 +108,7 @@ class MOVWFToken(ByteOpToken):
 
 class BitOpToken(vm_types.AssemblerToken):
     """Bit-oriented file register operation token."""
+
     def __init__(self, inst: str, op: int, f: str, b: str) -> None:
         super().__init__()
         self.inst = str(inst)
@@ -116,20 +120,22 @@ class BitOpToken(vm_types.AssemblerToken):
         return f"{self.inst}(f={self.f}, b={self.b})"
 
     def encode(self, assembler: vm_types.GenericAssembler) -> bytes:
-        f = resolve_int_value(assembler, self.f, 0x7f)
+        f = resolve_int_value(assembler, self.f, 0x7F)
         b = resolve_int_value(assembler, self.b, 0x7)
         code = self.op | (b << 7) | f
-        return code.to_bytes(2, 'big')
+        return code.to_bytes(2, "big")
 
 
 class BSFToken(BitOpToken):
     """Bit set f token."""
+
     def __init__(self, f: str, b: str) -> None:
         super().__init__("BSF", 0x1400, f, b)
 
 
 class BCFToken(BitOpToken):
     """Bit clear f token."""
+
     def __init__(self, f: str, b: str) -> None:
         super().__init__("BCF", 0x1000, f, b)
 
@@ -150,19 +156,21 @@ class LiteralOpToken(vm_types.AssemblerToken):
     def encode(self, assembler: vm_types.GenericAssembler) -> bytes:
         k = resolve_int_value(assembler, self.k, self.mask)
         code = self.op | k
-        return code.to_bytes(2, 'big')
+        return code.to_bytes(2, "big")
 
 
 class GOTOToken(LiteralOpToken):
     """Goto address token."""
+
     def __init__(self, k: str) -> None:
-        super().__init__("GOTO", 0x2800, k, 0x7ff)
+        super().__init__("GOTO", 0x2800, k, 0x7FF)
 
 
 class MOVLWToken(LiteralOpToken):
     """Move literal to W token."""
+
     def __init__(self, k: str) -> None:
-        super().__init__("MOVLW", 0x3000, k, 0xff)
+        super().__init__("MOVLW", 0x3000, k, 0xFF)
 
 
 TEST_PROG = """
@@ -185,19 +193,26 @@ Start:  movlw 02h
 
 
 class PICAssembler(vm_types.GenericAssembler):
-
-    PSEUDOOP_RE = re.compile(r"(?P<name>[A-Za-z]\w*)\s+(?P<pseudoop>\w+)\s+(?P<operands>\S+)(\s+?P<comment>;.*)?")
-    OPCODE_RE = re.compile(r"((?P<label>[A-Za-z]\w*):\s+)?(?P<opcode>\w+)(\s+(?P<operands>\S+))?(\s+?P<comment>;.*)?")
+    PSEUDOOP_RE = re.compile(
+        r"(?P<name>[A-Za-z]\w*)\s+(?P<pseudoop>\w+)\s+(?P<operands>\S+)(\s+?P<comment>;.*)?"
+    )
+    OPCODE_RE = re.compile(
+        r"((?P<label>[A-Za-z]\w*):\s+)?(?P<opcode>\w+)(\s+(?P<operands>\S+))?(\s+?P<comment>;.*)?"
+    )
 
     def __init__(
         self,
         program_text,
         instruction_codes: type[vm_types.GenericInstructionSet],
         word_size,
+        instructions_meta: Mapping[str, Callable],
+        macros_meta: Mapping[str, Callable],
     ):
         self.text = program_text
         self.codes = instruction_codes
         self.word_size = word_size
+        self.instructions_meta = instructions_meta
+        self.macros_meta = macros_meta
         self.word_size_bytes = word_size // vm_types.BITS_IN_BYTE
         self.symbol_table = {"map": {}, "symbols": {}}
         self.byte_code = bytearray()
@@ -205,12 +220,16 @@ class PICAssembler(vm_types.GenericAssembler):
     def load_program(self, program_text):
         self.text = program_text
 
-    def _process_pseudoop(self, name: str, pseudoop: str, operands: list[str], line_num: int) -> None:
+    def _process_pseudoop(
+        self, name: str, pseudoop: str, operands: list[str], line_num: int
+    ) -> None:
         match pseudoop:
             case "EQU":
                 # Defines symbol value.
                 if name in self.symbol_table["symbols"]:
-                    raise Exception(f"Symbol '{pseudoop}' redefinition on line {line_num}.")
+                    raise Exception(
+                        f"Symbol '{pseudoop}' redefinition on line {line_num}."
+                    )
                 self.symbol_table["symbols"][name] = operands[0]
             case "SET":
                 # Defines or re-defines symbol value.
@@ -221,7 +240,14 @@ class PICAssembler(vm_types.GenericAssembler):
             case _:
                 raise Exception(f"Unexpected pseudoop '{pseudoop}' on line {line_num}.")
 
-    def _process_opcode(self, label: str, opcode: str, operands: list[str], line_num: int, tokens: list[vm_types.AssemblerToken]) -> None:
+    def _process_opcode(
+        self,
+        label: str,
+        opcode: str,
+        operands: list[str],
+        line_num: int,
+        tokens: list[vm_types.AssemblerToken],
+    ) -> None:
         if label:
             tokens.append(LabelToken(label))
         match opcode:
@@ -263,7 +289,9 @@ class PICAssembler(vm_types.GenericAssembler):
                 opcode = m.group("opcode").upper()
                 operands = m.group("operands") or ""
                 operands = operands.split(",")
-                self._process_opcode(m.group("label"), opcode, operands, line_num, tokens)
+                self._process_opcode(
+                    m.group("label"), opcode, operands, line_num, tokens
+                )
             else:
                 raise Exception(f"Syntax error on line {line_num}.")
 
@@ -292,7 +320,9 @@ class PICAssembler(vm_types.GenericAssembler):
         return self.byte_code
 
 
-def resolve_int_value(assembler: vm_types.GenericAssembler, value: str, mask: int) -> int:
+def resolve_int_value(
+    assembler: vm_types.GenericAssembler, value: str, mask: int
+) -> int:
     """Resolve integer referene"""
     if value in assembler.symbol_table["symbols"]:
         # Symbol reference.
@@ -327,6 +357,7 @@ class PICCentralProcessingUnit(vm_types.GenericCentralProcessingUnit):
         def decorator(f):
             cls.INSTRUCTION_MAP[inst_code] = f
             return f
+
         return decorator
 
     @property
@@ -339,7 +370,7 @@ class PICCentralProcessingUnit(vm_types.GenericCentralProcessingUnit):
 
     def fetch(self):
         next_ip = self.pc + self.word_in_bytes
-        self.ic = int.from_bytes(self.RAM[self.pc: next_ip], "big")
+        self.ic = int.from_bytes(self.RAM[self.pc : next_ip], "big")
         self.pc = next_ip
 
     def reset(self):
@@ -348,18 +379,18 @@ class PICCentralProcessingUnit(vm_types.GenericCentralProcessingUnit):
         self.wreg = 0
 
     def exec(self):
-        if self.ic & 0xff80 == 0:
+        if self.ic & 0xFF80 == 0:
             ic = self.ic
-        elif self.ic & 0xff80 == 0x0080:
+        elif self.ic & 0xFF80 == 0x0080:
             ic = 0x0080
-        elif self.ic & 0xff00 == 0:
-            ic = self.ic & 0xff00
-        elif self.ic & 0xf000 == 0x1000:
-            ic = self.ic & 0xfc00
-        elif self.ic & 0xf000 == 0x2000:
-            ic = self.ic & 0xf800
-        elif self.ic & 0xf000 == 0x3000:
-            ic = self.ic & 0xff00
+        elif self.ic & 0xFF00 == 0:
+            ic = self.ic & 0xFF00
+        elif self.ic & 0xF000 == 0x1000:
+            ic = self.ic & 0xFC00
+        elif self.ic & 0xF000 == 0x2000:
+            ic = self.ic & 0xF800
+        elif self.ic & 0xF000 == 0x3000:
+            ic = self.ic & 0xFF00
         else:
             raise Exception(f"Unexpected instruction code 0x{self.ic:02x}.")
         ic_key = InstructionCodes(ic)
@@ -402,7 +433,7 @@ def nop(cpu: PICCentralProcessingUnit, ic: int):
 @PICCentralProcessingUnit.register_instruction(InstructionCodes.MOVWF)
 def movwf(cpu: PICCentralProcessingUnit, ic: int):
     """Move W to f."""
-    f = ic & 0x007f
+    f = ic & 0x007F
     cpu.RAM[FLASH_SIZE + f] = cpu.wreg
     logger.debug(f"0x{FLASH_SIZE + f:05x}: 0x{cpu.RAM[FLASH_SIZE + f]:02x}")
 
@@ -411,8 +442,8 @@ def movwf(cpu: PICCentralProcessingUnit, ic: int):
 def bcf(cpu: PICCentralProcessingUnit, ic: int):
     """Bit clear f."""
     b = (ic & 0x0380) >> 7
-    f = ic & 0x007f
-    cpu.RAM[FLASH_SIZE + f] &= ~(1 << b) & 0xff
+    f = ic & 0x007F
+    cpu.RAM[FLASH_SIZE + f] &= ~(1 << b) & 0xFF
     logger.debug(f"0x{FLASH_SIZE + f:05x}: 0x{cpu.RAM[FLASH_SIZE + f]:02x}")
 
 
@@ -420,32 +451,30 @@ def bcf(cpu: PICCentralProcessingUnit, ic: int):
 def bsf(cpu: PICCentralProcessingUnit, ic: int):
     """Bit set f."""
     b = (ic & 0x0380) >> 7
-    f = ic & 0x007f
-    cpu.RAM[FLASH_SIZE + f] |= (1 << b)
+    f = ic & 0x007F
+    cpu.RAM[FLASH_SIZE + f] |= 1 << b
     logger.debug(f"0x{FLASH_SIZE + f:05x}: 0x{cpu.RAM[FLASH_SIZE + f]:02x}")
 
 
 @PICCentralProcessingUnit.register_instruction(InstructionCodes.GOTO)
 def goto(cpu: PICCentralProcessingUnit, ic: int):
     """Goto address."""
-    k = ic & 0x07ff
+    k = ic & 0x07FF
     cpu.pc = k
 
 
 @PICCentralProcessingUnit.register_instruction(InstructionCodes.MOVLW)
 def movlw(cpu: PICCentralProcessingUnit, ic: int):
     """Move literal to W."""
-    k = ic & 0x00ff
+    k = ic & 0x00FF
     cpu.wreg = k
 
 
 def instance_factory() -> vm_types.GenericVirtualMachine:
     memory = bytearray(FLASH_SIZE + RAM_SIZE)
     cpu = PICCentralProcessingUnit(RAM=memory)
-    assembler = PICAssembler(TEST_PROG, InstructionCodes, WORD_SIZE)
-    vm = virtual_machine.VirtualMachine(
-        memory=memory, cpu=cpu, assembler=assembler
-    )
+    assembler = PICAssembler(TEST_PROG, InstructionCodes, WORD_SIZE, {}, {})
+    vm = virtual_machine.VirtualMachine(memory=memory, cpu=cpu, assembler=assembler)
     vm.load_program_at(0, TEST_PROG)
     vm.restart()
     return vm
