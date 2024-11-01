@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="logo.png" width="200">
+  <img src="logo2.png" width="820">
 </p>
 
 # Snake toy VM
