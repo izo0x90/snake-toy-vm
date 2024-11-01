@@ -13,6 +13,7 @@ from typing import (
     Callable,
     ClassVar,
     Generator,
+    Mapping,
     MutableMapping,
     Self,
     Sequence,
@@ -24,7 +25,7 @@ import virtual_machine
 logger = logging.getLogger(__name__)
 
 WORD_SIZE = 16
-CODE_SIZE = 2 * 2 ** 13  # 8192 code words
+CODE_SIZE = 2 * 2**13  # 8192 code words
 DATA_SIZE = 128
 
 
@@ -53,6 +54,7 @@ INST_MAP = {
 
 class BrainfuckToken(vm_types.AssemblerToken):
     """Brainfuck token."""
+
     def __init__(self, inst: str, arg: int) -> None:
         super().__init__()
         self.inst = str(inst)
@@ -107,9 +109,9 @@ def look_forward(insts: str, i: int) -> int:
     try:
         cnt = 0
         while True:
-            if insts[i] == '[':
+            if insts[i] == "[":
                 cnt += 1
-            elif insts[i] == ']':
+            elif insts[i] == "]":
                 cnt -= 1
             if not cnt:
                 return i - 1
@@ -119,16 +121,19 @@ def look_forward(insts: str, i: int) -> int:
 
 
 class BrainfuckAssembler(vm_types.GenericAssembler):
-
     def __init__(
         self,
         program_text,
         instruction_codes: type[vm_types.GenericInstructionSet],
         word_size,
+        instructions_meta: Mapping[str, Callable],
+        macros_meta: Mapping[str, Callable],
     ):
         self.text = program_text
         self.codes = instruction_codes
         self.word_size = word_size
+        self.instructions_meta = instructions_meta
+        self.macros_meta = macros_meta
         self.word_size_bytes = word_size // vm_types.BITS_IN_BYTE
         self.symbol_table = {}  # Not used.
         self.byte_code = bytearray()
@@ -143,7 +148,7 @@ class BrainfuckAssembler(vm_types.GenericAssembler):
         for i, line in enumerate(lines):
             line_num = i + 1
 
-            line = line.split(';', 1)[0].strip()
+            line = line.split(";", 1)[0].strip()
             for ch in line:
                 if ch in " \t\r\f\v":
                     # Skip whitespace.
@@ -210,6 +215,7 @@ class BrainfuckCentralProcessingUnit(vm_types.GenericCentralProcessingUnit):
         def decorator(f):
             cls.INSTRUCTION_MAP[inst_code] = f
             return f
+
         return decorator
 
     @property
@@ -222,7 +228,7 @@ class BrainfuckCentralProcessingUnit(vm_types.GenericCentralProcessingUnit):
 
     def fetch(self):
         next_ip = self.pc + self.word_in_bytes
-        self.ic = int.from_bytes(self.RAM[self.pc: next_ip], "little")
+        self.ic = int.from_bytes(self.RAM[self.pc : next_ip], "little")
         self.pc = next_ip
 
     def reset(self):
@@ -231,8 +237,8 @@ class BrainfuckCentralProcessingUnit(vm_types.GenericCentralProcessingUnit):
         self.dp = 0
 
     def exec(self):
-        ic = (self.ic & 0xe000) >> 13
-        arg = self.ic & 0x1fff
+        ic = (self.ic & 0xE000) >> 13
+        arg = self.ic & 0x1FFF
         ic_key = InstructionCodes(ic)
         logger.debug(f"Executing {ic_key.name}({arg})...")
         inst_func = self.INSTRUCTION_MAP[ic_key]
@@ -318,10 +324,8 @@ def loop_end_inst(cpu: BrainfuckCentralProcessingUnit, arg: int):
 def instance_factory() -> vm_types.GenericVirtualMachine:
     memory = bytearray(CODE_SIZE + DATA_SIZE)
     cpu = BrainfuckCentralProcessingUnit(RAM=memory)
-    assembler = BrainfuckAssembler(TEST_PROG, InstructionCodes, WORD_SIZE)
-    vm = virtual_machine.VirtualMachine(
-        memory=memory, cpu=cpu, assembler=assembler
-    )
+    assembler = BrainfuckAssembler(TEST_PROG, InstructionCodes, WORD_SIZE, {}, {})
+    vm = virtual_machine.VirtualMachine(memory=memory, cpu=cpu, assembler=assembler)
     vm.load_program_at(0, TEST_PROG)
     vm.restart()
     return vm
