@@ -7,7 +7,7 @@
 A generalized toy virtual machine, assembler, debugger/ UI written in python. Intended as just a fun time waster over a few weekends for myself, and also somehow we dragged in [@zayfod](https://github.com/zayfod) into this too, but maybe there is some educational value to others?
 
 - Keeping things simple, illustrating basic ideas behind classical computing, emulation and VMs
-- Modular
+- Modular way to define architecture/ VMs
   - Allows for definition of custom assembly sytaxes
   - Swapping/ extending instruction sets
 - VMs currently in project
