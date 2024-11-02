@@ -176,8 +176,10 @@ class MacroMeta:
 class SetLabelParamToken:
     value: str
 
-    def encode(self, assembler_instance: vm_types.GenericAssembler):
-        pass
+    def encode(
+        self, assembler_instance: vm_types.GenericAssembler, offset: int
+    ) -> bytes:
+        return b""
 
 
 @dataclass
@@ -257,7 +259,15 @@ class CPUFlags:
     overflow: bool = False
 
 
+class CPURegisterNames(vm_types.GenericCPURegisterNames):
+    PC = "PC"
+    A = "A"
+    IC = "IC"
+    HIDDEN = "HIDDEN"
+
+
 @dataclass
+@CPURegisterNames.validate_register_names
 class CPURegisters:
     PC: int = 0
     A: int = 0
@@ -268,7 +278,7 @@ class CPURegisters:
 @dataclass
 class CentralProcessingUnit:
     HALT_INS_CODE: int
-    RAM: bytearray
+    RAM: memoryview
     FLAGS: CPUFlags
     REGISTERS: CPURegisters = field(default_factory=CPURegisters)
     WORD_SIZE_BITS: int = WORD_SIZE
@@ -480,15 +490,16 @@ def instance_factory() -> vm_types.GenericVirtualMachine:
     )
 
     memory = bytearray(4 * 1024)
+    ram = memoryview(memory)
 
     cpu_instance = CentralProcessingUnit(
         HALT_INS_CODE=HALT_INS_CODE,
-        RAM=memory,
+        RAM=ram,
         FLAGS=CPUFlags(),
     )
 
     vm_instance = virtual_machine.VirtualMachine(
-        memory=memory, cpu=cpu_instance, assembler=assembler_instance
+        memory=ram, cpu=cpu_instance, assembler=assembler_instance
     )
 
     vm_instance.load_program_at(0, TEST_PROG)
@@ -499,8 +510,6 @@ def instance_factory() -> vm_types.GenericVirtualMachine:
 
 if __name__ == "__main__":
     import log  # noqa
-
-    memory = bytearray(4 * 1024)
 
     vm_instance = instance_factory()
 

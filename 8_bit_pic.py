@@ -61,7 +61,7 @@ class LabelToken(vm_types.AssemblerToken):
     def __repr__(self) -> str:
         return f"Label('{self.label}')"
 
-    def encode(self, assembler: vm_types.GenericAssembler) -> bytes:
+    def encode(self, assembler: vm_types.GenericAssembler) -> bytes:  # type: ignore
         assembler.symbol_table["map"][self.label] = len(assembler.byte_code)
         return b""
 
@@ -79,7 +79,7 @@ class ByteOpToken(vm_types.AssemblerToken):
     def __repr__(self) -> str:
         return f"{self.inst}(f={self.f}, d={self.d})"
 
-    def encode(self, assembler: vm_types.GenericAssembler) -> bytes:
+    def encode(self, assembler: vm_types.GenericAssembler) -> bytes:  # type: ignore
         f = resolve_int_value(assembler, self.f, 0x7F)
         d = resolve_int_value(assembler, self.d, 0x1)
         code = self.op | (d << 7) | f
@@ -119,7 +119,7 @@ class BitOpToken(vm_types.AssemblerToken):
     def __repr__(self) -> str:
         return f"{self.inst}(f={self.f}, b={self.b})"
 
-    def encode(self, assembler: vm_types.GenericAssembler) -> bytes:
+    def encode(self, assembler: vm_types.GenericAssembler) -> bytes:  # type: ignore
         f = resolve_int_value(assembler, self.f, 0x7F)
         b = resolve_int_value(assembler, self.b, 0x7)
         code = self.op | (b << 7) | f
@@ -153,7 +153,7 @@ class LiteralOpToken(vm_types.AssemblerToken):
     def __repr__(self) -> str:
         return f"{self.inst}(k={self.k})"
 
-    def encode(self, assembler: vm_types.GenericAssembler) -> bytes:
+    def encode(self, assembler: vm_types.GenericAssembler) -> bytes:  # type: ignore
         k = resolve_int_value(assembler, self.k, self.mask)
         code = self.op | k
         return code.to_bytes(2, "big")
@@ -193,6 +193,9 @@ Start:  movlw 02h
 
 
 class PICAssembler(vm_types.GenericAssembler):
+    instructions_meta = {}  # Not in use
+    macros_meta = {}  # Not in use
+
     PSEUDOOP_RE = re.compile(
         r"(?P<name>[A-Za-z]\w*)\s+(?P<pseudoop>\w+)\s+(?P<operands>\S+)(\s+?P<comment>;.*)?"
     )
@@ -343,8 +346,8 @@ def resolve_int_value(
 
 
 @dataclass
-class PICCentralProcessingUnit(vm_types.GenericCentralProcessingUnit):
-    RAM: bytearray
+class PICCentralProcessingUnit:
+    RAM: memoryview
     INSTRUCTION_MAP: ClassVar[
         MutableMapping[InstructionCodes, Callable[[Self, int], None]]
     ] = {}
@@ -472,9 +475,10 @@ def movlw(cpu: PICCentralProcessingUnit, ic: int):
 
 def instance_factory() -> vm_types.GenericVirtualMachine:
     memory = bytearray(FLASH_SIZE + RAM_SIZE)
-    cpu = PICCentralProcessingUnit(RAM=memory)
+    ram = memoryview(memory)
+    cpu = PICCentralProcessingUnit(RAM=ram)
     assembler = PICAssembler(TEST_PROG, InstructionCodes, WORD_SIZE, {}, {})
-    vm = virtual_machine.VirtualMachine(memory=memory, cpu=cpu, assembler=assembler)
+    vm = virtual_machine.VirtualMachine(memory=ram, cpu=cpu, assembler=assembler)
     vm.load_program_at(0, TEST_PROG)
     vm.restart()
     return vm

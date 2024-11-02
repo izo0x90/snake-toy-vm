@@ -63,7 +63,7 @@ class BrainfuckToken(vm_types.AssemblerToken):
     def __repr__(self) -> str:
         return f"{self.inst}"
 
-    def encode(self, _) -> bytes:
+    def encode(self, _) -> bytes:  # type: ignore
         code = (INST_MAP[self.inst].value << 13) | (self.arg & 0x1FFF)
         return code.to_bytes(2, "little")
 
@@ -94,8 +94,6 @@ TEST_PROG = """
 ; Pointer :   ^
 
 >>.                     ; Cell #2 has value 72 which is 'H'
->---.                   ; Subtract 3 from Cell #3 to get 101 which is 'e'
-+++++++..+++.           ; Likewise for 'llo' from Cell #3
 >>.                     ; Cell #5 is 32 for the space
 <-.                     ; Subtract 1 from Cell #4 for 87 to give a 'W'
 <.                      ; Cell #3 was set to 'o' from the end of 'Hello'
@@ -121,6 +119,9 @@ def look_forward(insts: str, i: int) -> int:
 
 
 class BrainfuckAssembler(vm_types.GenericAssembler):
+    instructions_meta = {}  # Not in use
+    macros_meta = {}  # Not in use
+
     def __init__(
         self,
         program_text,
@@ -201,8 +202,8 @@ class BrainfuckAssembler(vm_types.GenericAssembler):
 
 
 @dataclass
-class BrainfuckCentralProcessingUnit(vm_types.GenericCentralProcessingUnit):
-    RAM: bytearray
+class BrainfuckCentralProcessingUnit:
+    RAM: memoryview
     INSTRUCTION_MAP: ClassVar[
         MutableMapping[InstructionCodes, Callable[[Self, int], None]]
     ] = {}
@@ -323,9 +324,10 @@ def loop_end_inst(cpu: BrainfuckCentralProcessingUnit, arg: int):
 
 def instance_factory() -> vm_types.GenericVirtualMachine:
     memory = bytearray(CODE_SIZE + DATA_SIZE)
-    cpu = BrainfuckCentralProcessingUnit(RAM=memory)
+    ram = memoryview(memory)
+    cpu = BrainfuckCentralProcessingUnit(RAM=ram)
     assembler = BrainfuckAssembler(TEST_PROG, InstructionCodes, WORD_SIZE, {}, {})
-    vm = virtual_machine.VirtualMachine(memory=memory, cpu=cpu, assembler=assembler)
+    vm = virtual_machine.VirtualMachine(memory=ram, cpu=cpu, assembler=assembler)
     vm.load_program_at(0, TEST_PROG)
     vm.restart()
     return vm

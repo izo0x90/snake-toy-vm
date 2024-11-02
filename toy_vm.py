@@ -7,6 +7,7 @@ from typing import (
     ClassVar,
     Generator,
     MutableMapping,
+    Optional,
     Self,
     Sequence,
     Tuple,
@@ -26,13 +27,23 @@ class InstructionCodes(vm_types.GenericInstructionSet):
     NOP = 0x00
     LOADA = 0x1
     LOADB = 0x2
-    ADD = 0x3
+    LOADC = 0x3
     MLOADA = 0x4
-    MSTOREA = 0x5
     MLOADB = 0x6
     LOADIX = 0x7
+    MLOADIX = 0x8
     JMP = 0x10
     JZ = 0x11
+    JO = 0x12
+    JS = 0x13
+    JC = 0x14
+    MOVAIX = 0xA0
+    MSTOREA = 0xB0
+    MSTOREB = 0xB1
+    MSTOREC = 0xB2
+    INA = 0xC0
+    OUTA = 0xC1
+    ADD = 0xF0
     HALT = HALT_INS_CODE
 
 
@@ -135,19 +146,50 @@ class InstructionMeta:
 GenericOneInlineParamIns = InstructionMeta(params=[InlineParamToken])
 GenericOneLabelOrInlineParamIns = InstructionMeta(params=[LabelOrInlineParamToken])
 
-INSTRUCTIONS_META = {
-    InstructionCodes.NOP: InstructionMeta(),
-    InstructionCodes.LOADA: GenericOneInlineParamIns,
-    InstructionCodes.MLOADA: GenericOneLabelOrInlineParamIns,
-    InstructionCodes.LOADB: GenericOneInlineParamIns,
-    InstructionCodes.MLOADB: GenericOneLabelOrInlineParamIns,
-    InstructionCodes.LOADIX: GenericOneInlineParamIns,
-    InstructionCodes.MSTOREA: GenericOneLabelOrInlineParamIns,
-    InstructionCodes.ADD: InstructionMeta(),
-    InstructionCodes.JMP: GenericOneLabelOrInlineParamIns,
-    InstructionCodes.JZ: GenericOneLabelOrInlineParamIns,
-    InstructionCodes.HALT: InstructionMeta(),
+
+NOPARAMS_INSTRUCTIONS_META = {
+    instruction: InstructionMeta()
+    for instruction in [
+        InstructionCodes.NOP,
+        InstructionCodes.ADD,
+        InstructionCodes.HALT,
+        InstructionCodes.MOVAIX,
+        InstructionCodes.INA,
+        InstructionCodes.OUTA,
+    ]
 }
+
+
+INLINE_PARAM_INSTRUCTIONS_META = {
+    InstructionCodes.LOADA: GenericOneInlineParamIns,
+    InstructionCodes.LOADB: GenericOneInlineParamIns,
+    InstructionCodes.LOADC: GenericOneInlineParamIns,
+    InstructionCodes.LOADIX: GenericOneInlineParamIns,
+}
+
+
+ONE_LABEL_INLINE_INSTRUCTIONS_META = {
+    instruction: GenericOneLabelOrInlineParamIns
+    for instruction in [
+        InstructionCodes.MLOADA,
+        InstructionCodes.MLOADB,
+        InstructionCodes.MLOADIX,
+        InstructionCodes.MSTOREA,
+        InstructionCodes.MSTOREC,
+        InstructionCodes.JMP,
+        InstructionCodes.JZ,
+        InstructionCodes.JO,
+        InstructionCodes.JS,
+        InstructionCodes.JC,
+    ]
+}
+
+
+INSTRUCTIONS_META = (
+    NOPARAMS_INSTRUCTIONS_META
+    | INLINE_PARAM_INSTRUCTIONS_META
+    | ONE_LABEL_INLINE_INSTRUCTIONS_META
+)
 
 
 @dataclass
@@ -159,8 +201,10 @@ class MacroMeta:
 class SetLabelParamToken:
     value: str
 
-    def encode(self, assembler_instance: vm_types.GenericAssembler):
-        pass
+    def encode(
+        self, assembler_instance: vm_types.GenericAssembler, offset: int
+    ) -> bytes:
+        return b""
 
 
 @dataclass
@@ -206,24 +250,39 @@ TEST_PROG = """
 
 JMP .START
 LABEL .DATA:
-DWORD 0xABAB,0xCDCD
+DWORD 0xABAB,0xCDCD,0xABAB,0xCDCD,0xABAB
 
 LABEL .START: NOP
 # Loop
 LOADA 0x000A
 LOADB -1
+LOADC 0xFFFF
 
-LABEL .LOOP
+LABEL .VIDEO_LOOP
+MOVAIX
+MSTOREC 0x1000 # Video memory
 ADD
-JZ .END
-JMP .LOOP
+JZ .EXIT_VIDEO_LOOP
+JMP .VIDEO_LOOP
+LABEL .EXIT_VIDEO_LOOP:
+
+# Write to "data" Loop
+LOADA 0x000A
+LOADB -1
+
+LABEL .DATA_LOOP
+MOVAIX
+MSTOREA .DATA
+ADD
+JZ .EXIT_DATA_LOOP
+JMP .DATA_LOOP
+LABEL .EXIT_DATA_LOOP:
 
 # Memory loads
 MLOADA .END
 MLOADA .DATA
 LOADIX 0x0001
 MLOADB .DATA
-HALT
 
 # No overflow or carry
 LOADA 0xFFFD
@@ -256,9 +315,18 @@ class AddressModes:
     IMMEDIATE = 0
     DIRECT = 1
     DIRECT_INDEXED = 2
+    REGISTER = 255
+
+
+class CPUFlagNames(vm_types.GenericCPURegisterNames):
+    overflow = "overflow"
+    carry = "carry"
+    signed = "signed"
+    zero = "zero"
 
 
 @dataclass
+@CPUFlagNames.validate_register_names
 class CPUFlags:
     overflow: bool = False
     carry: bool = False
@@ -266,21 +334,36 @@ class CPUFlags:
     zero: bool = False
 
 
+class CPURegisterNames(vm_types.GenericCPURegisterNames):
+    IP = "IP"
+    SP = "SP"
+    IC = "IC"
+    AA = "AA"
+    AB = "AB"
+    AC = "AC"
+    IX = "IX"
+    _HIDDEN = "_H"
+
+
 @dataclass
+@CPURegisterNames.validate_register_names
 class CPURegisters:
     IP: int = 0
     SP: int = 0
     IC: int = 0
     AA: int = 0
     AB: int = 0
+    AC: int = 0
     IX: int = 0
+    _H: int = 0
 
 
 @dataclass
 class CentralProcessingUnit:
     HALT_INS_CODE: int
-    RAM: bytearray
+    RAM: memoryview
     FLAGS: CPUFlags
+    DEVICE_MANAGER: vm_types.GenericDeviceManager
     REGISTERS: CPURegisters = field(default_factory=CPURegisters)
     WORD_SIZE_BITS: int = WORD_SIZE
     INSTRUCTION_MAP: ClassVar[
@@ -291,6 +374,18 @@ class CentralProcessingUnit:
     def register_instruction(cls, inst_code) -> vm_types.DecoratorCallable:
         def decorator(f) -> Callable:
             cls.INSTRUCTION_MAP[inst_code] = f
+            return f
+
+        return decorator
+
+    @classmethod
+    def register_instruction_variants(
+        cls, bind_list: Sequence[Tuple[InstructionCodes, dict[str, Any]]]
+    ) -> vm_types.DecoratorCallable:
+        def decorator(f: Callable) -> Callable:
+            for ins_code, kwargs in bind_list:
+                bound_func = functools.partial(f, **kwargs)
+                cls.register_instruction(ins_code)(bound_func)
             return f
 
         return decorator
@@ -319,6 +414,7 @@ class CentralProcessingUnit:
     def run(self) -> Generator:
         while not self.fetch() and self.REGISTERS.IC != self.HALT_INS_CODE:
             yield
+
             logger.debug("Running CPU step ...")
             logger.debug(f"{hex(self.REGISTERS.IC)=}")
             self.exec()
@@ -346,22 +442,10 @@ class CentralProcessingUnit:
         self.REGISTERS.SP = address
         return self.REGISTERS.SP
 
-    @classmethod
-    def bind_to_registers(
-        cls, bind_list: Sequence[Tuple[InstructionCodes, dict[str, Any]]]
-    ) -> vm_types.DecoratorCallable:
-        def decorator(f: Callable) -> Callable:
-            for ins_code, kwargs in bind_list:
-                bound_func = functools.partial(f, **kwargs)
-                cls.register_instruction(ins_code)(bound_func)
-            return f
-
-        return decorator
-
 
 def load(
     instance: CentralProcessingUnit,
-    reg_name: str,
+    reg_name: CPURegisterNames,
     ip_unmodified=False,
     address_mode=AddressModes.IMMEDIATE,
 ):
@@ -380,10 +464,46 @@ def load(
             )
 
         case _:
-            raise ValueError(f"Unknown {address_mode=}")
+            raise ValueError(f"Unknown {address_mode=} for load OP")
 
-    setattr(instance.REGISTERS, reg_name, val)
+    setattr(instance.REGISTERS, reg_name.value, val)
     if not ip_unmodified:
+        instance.REGISTERS.IP += instance.word_in_bytes
+
+
+def store(
+    instance: CentralProcessingUnit,
+    source_reg_name: CPURegisterNames,
+    *,
+    dest_reg_name: Optional[CPURegisterNames] = None,
+    address_mode=AddressModes.IMMEDIATE,
+):
+    val = getattr(instance.REGISTERS, source_reg_name.value)
+
+    match address_mode:
+        case AddressModes.DIRECT_INDEXED:
+            val = val.to_bytes(length=instance.word_in_bytes)
+            address_bytes_val = instance.RAM[
+                instance.REGISTERS.IP : instance.REGISTERS.IP + instance.word_in_bytes
+            ]
+            address = int.from_bytes(address_bytes_val) + instance.REGISTERS.IX
+
+            instance.RAM[address : address + instance.word_in_bytes] = val
+
+            instance.REGISTERS.IP += instance.word_in_bytes
+        case AddressModes.REGISTER:
+            if not dest_reg_name:
+                raise ValueError("Missing destination register name")
+            setattr(instance.REGISTERS, dest_reg_name.value, val)
+
+        case _:
+            raise ValueError(f"Unknown {address_mode=} for store OP")
+
+
+def jump(instance: CentralProcessingUnit, flag_name: Optional[CPUFlagNames] = None):
+    if not flag_name or getattr(instance.FLAGS, flag_name.value):
+        load(instance, CPURegisterNames.IP, ip_unmodified=True)
+    else:
         instance.REGISTERS.IP += instance.word_in_bytes
 
 
@@ -392,26 +512,73 @@ def noop(instance: CentralProcessingUnit):
     pass
 
 
-@CentralProcessingUnit.bind_to_registers(
+@CentralProcessingUnit.register_instruction_variants(
     [
-        (InstructionCodes.LOADA, {"reg_name": "AA"}),
-        (InstructionCodes.LOADB, {"reg_name": "AB"}),
-        (InstructionCodes.LOADIX, {"reg_name": "IX"}),
+        (InstructionCodes.LOADA, {"reg_name": CPURegisterNames.AA}),
+        (InstructionCodes.LOADB, {"reg_name": CPURegisterNames.AB}),
+        (InstructionCodes.LOADC, {"reg_name": CPURegisterNames.AC}),
+        (InstructionCodes.LOADIX, {"reg_name": CPURegisterNames.IX}),
     ]
 )
-def load_immediate(instance: CentralProcessingUnit, reg_name: str):
+def load_immediate(instance: CentralProcessingUnit, reg_name: CPURegisterNames):
     load(instance, reg_name)
 
 
-@CentralProcessingUnit.bind_to_registers(
+@CentralProcessingUnit.register_instruction_variants(
     [
-        (InstructionCodes.MLOADA, {"reg_name": "AA"}),
-        (InstructionCodes.MLOADB, {"reg_name": "AB"}),
-        # (InstructionCodes.MLOADIX, {"reg_name": "IX"}),
+        (InstructionCodes.MLOADA, {"reg_name": CPURegisterNames.AA}),
+        (InstructionCodes.MLOADB, {"reg_name": CPURegisterNames.AB}),
+        (InstructionCodes.MLOADIX, {"reg_name": CPURegisterNames.IX}),
     ]
 )
-def mload_direct(instance: CentralProcessingUnit, reg_name: str):
+def mload_direct(instance: CentralProcessingUnit, reg_name: CPURegisterNames):
     load(instance, reg_name, address_mode=AddressModes.DIRECT_INDEXED)
+
+
+@CentralProcessingUnit.register_instruction_variants(
+    [
+        (
+            InstructionCodes.MOVAIX,
+            {
+                "source_reg_name": CPURegisterNames.AA,
+                "dest_reg_name": CPURegisterNames.IX,
+            },
+        ),
+    ]
+)
+def rstore(
+    instance: CentralProcessingUnit,
+    source_reg_name: CPURegisterNames,
+    dest_reg_name: CPURegisterNames,
+):
+    store(
+        instance,
+        source_reg_name,
+        dest_reg_name=dest_reg_name,
+        address_mode=AddressModes.REGISTER,
+    )
+
+
+@CentralProcessingUnit.register_instruction_variants(
+    [
+        (InstructionCodes.MSTOREA, {"source_reg_name": CPURegisterNames.AA}),
+        (InstructionCodes.MSTOREC, {"source_reg_name": CPURegisterNames.AC}),
+    ]
+)
+def mstore_direct(instance: CentralProcessingUnit, source_reg_name: CPURegisterNames):
+    store(instance, source_reg_name, address_mode=AddressModes.DIRECT_INDEXED)
+
+
+@CentralProcessingUnit.register_instruction(InstructionCodes.INA)
+def in_inst(instance: CentralProcessingUnit):
+    load(instance, CPURegisterNames._HIDDEN)
+    instance.REGISTERS.AA = instance.DEVICE_MANAGER.read_port(instance.REGISTERS._H)
+
+
+@CentralProcessingUnit.register_instruction(InstructionCodes.OUTA)
+def out_inst(instance: CentralProcessingUnit):
+    load(instance, CPURegisterNames._HIDDEN)
+    instance.DEVICE_MANAGER.write_port(instance.REGISTERS._H, instance.REGISTERS.AA)
 
 
 @CentralProcessingUnit.register_instruction(InstructionCodes.ADD)
@@ -450,16 +617,32 @@ def add_inst(instance: CentralProcessingUnit):
 
 
 @CentralProcessingUnit.register_instruction(InstructionCodes.JMP)
-def jump(instance: CentralProcessingUnit):
-    load(instance, "IP", ip_unmodified=True)
+def jump_to(instance: CentralProcessingUnit):
+    jump(instance)
 
 
-@CentralProcessingUnit.register_instruction(InstructionCodes.JZ)
-def jump_zero(instance: CentralProcessingUnit):
-    if instance.FLAGS.zero:
-        load(instance, "IP", ip_unmodified=True)
-    else:
-        instance.REGISTERS.IP += instance.word_in_bytes
+@CentralProcessingUnit.register_instruction_variants(
+    [
+        (InstructionCodes.JZ, {"flag_name": CPUFlagNames.zero}),
+        (InstructionCodes.JO, {"flag_name": CPUFlagNames.overflow}),
+        (InstructionCodes.JS, {"flag_name": CPUFlagNames.signed}),
+        (InstructionCodes.JC, {"flag_name": CPUFlagNames.carry}),
+    ]
+)
+def jump_flag(instance: CentralProcessingUnit, flag_name: CPUFlagNames):
+    jump(instance, flag_name=flag_name)
+
+
+@dataclass
+class VideoOutputDevice(vm_types.GenericVideoDevice):
+    VRAM_OFFSET: int
+    VRAM_SIZE: int
+    VRAM: memoryview
+    resolution: vm_types.VideoResolution
+
+    @virtual_machine.device_register_port(0, True)
+    def get_vram_address(self):
+        return self.VRAM_OFFSET
 
 
 def instance_factory() -> vm_types.GenericVirtualMachine:
@@ -467,16 +650,36 @@ def instance_factory() -> vm_types.GenericVirtualMachine:
         TEST_PROG, InstructionCodes, WORD_SIZE, INSTRUCTIONS_META, MACROS_META
     )
 
-    memory = bytearray(4 * 1024)
+    SCREEN_WIDTH = 640 // 8
+    SCREEN_HEIGHT = 400 // 8
+
+    ram_size = 4 * 1024
+    vram_size = SCREEN_WIDTH * SCREEN_HEIGHT * 3
+    memory = bytearray(ram_size + vram_size)
+    ram = memoryview(memory)
+    vram = memoryview(memory)[ram_size : ram_size + vram_size]
+
+    device_manager = virtual_machine.DeviceManager(
+        video_device=VideoOutputDevice(
+            ram_size,
+            vram_size,
+            vram,
+            vm_types.VideoResolution(SCREEN_WIDTH, SCREEN_HEIGHT),
+        ),
+    )
 
     cpu_instance = CentralProcessingUnit(
         HALT_INS_CODE=HALT_INS_CODE,
-        RAM=memory,
+        RAM=ram,
         FLAGS=CPUFlags(),
+        DEVICE_MANAGER=device_manager,
     )
 
     vm_instance = virtual_machine.VirtualMachine(
-        memory=memory, cpu=cpu_instance, assembler=assembler_instance
+        memory=ram,
+        cpu=cpu_instance,
+        assembler=assembler_instance,
+        device_manager=device_manager,
     )
 
     vm_instance.load_program_at(0, TEST_PROG)
@@ -487,17 +690,6 @@ def instance_factory() -> vm_types.GenericVirtualMachine:
 
 if __name__ == "__main__":
     import log  # noqa
-
-    # Manual load test prog. in mem.
-    # memory[0] = 0x01
-    # memory[1] = 0xFF
-    # memory[2] = 0xFF
-    # memory[3] = 0x02
-    # memory[4] = 0x00
-    # memory[5] = 0x02
-    # memory[6] = 0x03
-    # memory[10] = HALT_INS_CODE >> 8
-    # memory[11] = HALT_INS_CODE - ((HALT_INS_CODE >> 8) << 8)
 
     vm_instance = instance_factory()
 

@@ -29,13 +29,20 @@ Writing a VM in a language that runs in a VM and has no business having a VM wri
 
 ### Pre
 Clone repo
-Install python 3.13 on system or virt. env.
+
+Install python 3.13 
+
 Install `uv` (Optional):
 ```
 pip install uv
 ```
 
 Install deps:
+Setup virtual env., and install deps. (Uses `uv`)
+```
+make dev_build_env
+```
+or
 ```
 uv pip install -r requirements.txt
 ```
@@ -59,16 +66,34 @@ python main.py toy_vm toy_vm
 ```
 
 ## Contribute
+All check/ auto-fixes:
+```
+make check-all
+```
+
 Lint:
+```
+make lint
+```
+or 
 ```
 ruff check
 ```
 
 Format:
 ```
+make format
+```
+or
+```
 ruff format
 ```
 
-
-
-
+Type checks:
+```
+make type-check
+```
+or
+```
+pyright .
+```
