@@ -52,7 +52,7 @@ INST_MAP = {
 }
 
 
-class BrainfuckToken(vm_types.AssemblerToken):
+class BrainfuckToken:
     """Brainfuck token."""
 
     def __init__(self, inst: str, arg: int) -> None:
@@ -63,7 +63,7 @@ class BrainfuckToken(vm_types.AssemblerToken):
     def __repr__(self) -> str:
         return f"{self.inst}"
 
-    def encode(self, _) -> bytes:  # type: ignore
+    def encode(self, assembler_instance) -> bytes:  # type: ignore
         code = (INST_MAP[self.inst].value << 13) | (self.arg & 0x1FFF)
         return code.to_bytes(2, "little")
 
@@ -118,7 +118,7 @@ def look_forward(insts: str, i: int) -> int:
         raise Exception("Unclosed loop.")
 
 
-class BrainfuckAssembler(vm_types.GenericAssembler):
+class BrainfuckAssembler:
     instructions_meta = {}  # Not in use
     macros_meta = {}  # Not in use
 
