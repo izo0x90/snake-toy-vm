@@ -205,10 +205,12 @@ class Dispaly:
         )
 
     def refresh(self):
-        image_bytes = self.ui_root.vm.get_video_memory()
+        image_bytes = self.ui_root.vm.video_memory
+        resolution = self.ui_root.vm.video_resolution
         source = pygame.image.frombuffer(
             image_bytes,
-            (self.display_surface_dims.w // 2, self.display_surface_dims.h // 2),
+            # (self.display_surface_dims.w // 2, self.display_surface_dims.h // 2),
+            resolution,
             "RGB",
         )
         self.display_image.set_image(source)

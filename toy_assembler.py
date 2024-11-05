@@ -49,7 +49,6 @@ class Assembler:
 
         assembler_tokens = []
         for token in (tokens := filter(lambda x: x, tokens)):
-            print(token)
             if code := getattr(self.codes, token, None):
                 meta = self.instructions_meta[code]
                 param_values = []

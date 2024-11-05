@@ -52,7 +52,7 @@ INST_MAP = {
 }
 
 
-class BrainfuckToken(vm_types.AssemblerToken):
+class BrainfuckToken:
     """Brainfuck token."""
 
     def __init__(self, inst: str, arg: int) -> None:
@@ -63,7 +63,7 @@ class BrainfuckToken(vm_types.AssemblerToken):
     def __repr__(self) -> str:
         return f"{self.inst}"
 
-    def encode(self, _) -> bytes:
+    def encode(self, assembler_instance) -> bytes:  # type: ignore
         code = (INST_MAP[self.inst].value << 13) | (self.arg & 0x1FFF)
         return code.to_bytes(2, "little")
 
@@ -120,7 +120,10 @@ def look_forward(insts: str, i: int) -> int:
         raise Exception("Unclosed loop.")
 
 
-class BrainfuckAssembler(vm_types.GenericAssembler):
+class BrainfuckAssembler:
+    instructions_meta = {}  # Not in use
+    macros_meta = {}  # Not in use
+
     def __init__(
         self,
         program_text,
@@ -201,8 +204,8 @@ class BrainfuckAssembler(vm_types.GenericAssembler):
 
 
 @dataclass
-class BrainfuckCentralProcessingUnit(vm_types.GenericCentralProcessingUnit):
-    RAM: bytearray
+class BrainfuckCentralProcessingUnit:
+    RAM: memoryview
     INSTRUCTION_MAP: ClassVar[
         MutableMapping[InstructionCodes, Callable[[Self, int], None]]
     ] = {}
@@ -323,9 +326,10 @@ def loop_end_inst(cpu: BrainfuckCentralProcessingUnit, arg: int):
 
 def instance_factory() -> vm_types.GenericVirtualMachine:
     memory = bytearray(CODE_SIZE + DATA_SIZE)
-    cpu = BrainfuckCentralProcessingUnit(RAM=memory)
+    ram = memoryview(memory)
+    cpu = BrainfuckCentralProcessingUnit(RAM=ram)
     assembler = BrainfuckAssembler(TEST_PROG, InstructionCodes, WORD_SIZE, {}, {})
-    vm = virtual_machine.VirtualMachine(memory=memory, cpu=cpu, assembler=assembler)
+    vm = virtual_machine.VirtualMachine(memory=ram, cpu=cpu, assembler=assembler)
     vm.load_program_at(0, TEST_PROG)
     vm.restart()
     return vm

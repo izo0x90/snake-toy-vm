@@ -1,22 +1,73 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import logging
+from typing import Callable, MutableMapping, Optional, cast
 
 import vm_types
 
 logger = logging.getLogger(__name__)
 
 
+def device_register_port(
+    port_id: int, is_read_from_port: bool = True
+) -> vm_types.DecoratorCallable:
+    def decorator(method) -> Callable:
+        return vm_types.PortLabeldCallable(
+            method, vm_types.PortInfo(port_id, is_read_from_port)
+        )
+
+    return decorator
+
+
+@dataclass
+class DeviceManager:
+    video_device: Optional[vm_types.GenericVideoDevice] = None
+    _WRITE_TO_PORTS: MutableMapping[int, Callable] = field(default_factory=dict)
+    _READ_FROM_PORTS: MutableMapping[int, Callable] = field(default_factory=dict)
+
+    def __post_init__(self):
+        self._register_devices([self.video_device])
+
+    def _register_devices(self, devices):
+        for device_object in devices:
+            for attr_name in dir(device_object):
+                attr = getattr(device_object, attr_name)
+                if callable(attr) and hasattr(
+                    attr, vm_types.PortLabeldCallable.IS_PORT_HANDLER
+                ):
+                    port_mapping = self._WRITE_TO_PORTS
+                    if (
+                        port_handler := cast(vm_types.PortLabeldCallable, attr)
+                    ).info.read_port:
+                        port_mapping = self._READ_FROM_PORTS
+                    if port_handler.info.port_id in port_mapping:
+                        raise ValueError(
+                            f"Port id={port_handler.info.port_id} " "already registerd"
+                        )
+                    port_mapping[port_handler.info.port_id] = port_handler
+
+    def read_port(self, port_id: int) -> int: ...
+
+    def write_port(self, port_id: int, value: int): ...
+
+
 @dataclass
 class VirtualMachine:
-    memory: bytearray
-    cpu: vm_types.GenericCentralProcessingUnit
+    memory: memoryview
+    cpu: (
+        vm_types.GenericCentralProcessingUnit
+        | vm_types.GenericCentralProcessingUnitDevicePorts
+    )
     assembler: vm_types.GenericAssembler
+    device_manager: vm_types.GenericDeviceManager = field(default_factory=DeviceManager)
     stack_address: int | None = None
     clock_speed_hz: int = 1
     _ellapsed_since_last: float = 0
 
-    def __post_init(self):
+    def __post_init__(self):
         self.restart()
+
+    def _replace_memory(self, memory: bytearray):
+        self.memory[:] = memory
 
     def get_registers(self):
         return self.cpu.dump_registers()
@@ -27,22 +78,28 @@ class VirtualMachine:
     def get_current_instruction_address(self):
         return self.cpu.current_inst_address
 
-    def get_video_memory(self):
+    @property
+    def video_memory(self) -> bytearray | memoryview:
         # Place holder until video memory gets implemented
-        bytes_data = bytearray(320 * 200 * 3)
-        for y in range(0, 200):
-            for x in range(0, 320, 1):
-                row = (320 * 3) * y
-                col = x * 3
-                bytes_data[row + col] = (x ^ y) % 255
-                bytes_data[row + col + 1] = 0
-                bytes_data[row + col + 2] = 0
+        if self.device_manager.video_device:
+            bytes_data = self.device_manager.video_device.VRAM
+        else:
+            bytes_data = bytearray(320 * 200 * 3)
+            for y in range(0, 200):
+                for x in range(0, 320, 1):
+                    row = (320 * 3) * y
+                    col = x * 3
+                    bytes_data[row + col] = (x ^ y) % 255
+                    bytes_data[row + col + 1] = 0
+                    bytes_data[row + col + 2] = 0
 
         return bytes_data
 
-    def _replace_memory(self, memory: bytearray):
-        self.memory = memory
-        self.cpu.RAM = self.memory
+    @property
+    def video_resolution(self):
+        if self.device_manager.video_device:
+            return self.device_manager.video_device.resolution
+        return vm_types.VideoResolution(320, 200)
 
     def load_at(self, address: int, data: bytearray, force=False):
         # TODO: I think there is 1 off bug here looking how mem changes
@@ -55,9 +112,7 @@ class VirtualMachine:
         if address < 0 or (address + data_len - 1) >= memory_len:
             raise Exception("TODO")
 
-        self._replace_memory(
-            self.memory[:address] + data + self.memory[address + data_len - 1 :]
-        )
+        self.memory[address : len(data)] = data
 
         logger.debug(
             f"Loaded data at {hex(address)=}\n" f"data=({self.memory[:102].hex()}...)"

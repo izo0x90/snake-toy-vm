@@ -3,10 +3,15 @@ import enum
 from typing import (
     Any,
     Callable,
+    ClassVar,
     Generator,
     Mapping,
+    MutableMapping,
+    NamedTuple,
+    Optional,
     Protocol,
     Sequence,
+    TypeVar,
     Union,
 )
 
@@ -52,6 +57,8 @@ class AssemblerToken(Protocol):
 
 
 class AssemblerParamToken(Protocol):
+    value: Any
+
     def __init__(self, value: str): ...
 
     def encode(
@@ -67,8 +74,75 @@ class AssemblerMetaParamToken(Protocol):
     ) -> AssemblerParamToken: ...
 
 
+class PortInfo(NamedTuple):
+    port_id: int
+    read_port: bool
+
+
+class PortLabeldCallable:
+    IS_PORT_HANDLER: ClassVar[str] = "IS_PORT_HANDLER"
+
+    def __init__(self, func: Callable, info: PortInfo):
+        self.__func__ = func
+        self.info = info
+
+    def __call__(self, *args, **kwargs) -> Any:
+        return self.__func__(*args, **kwargs)
+
+
+class GenericDevice: ...
+
+
+class VideoResolution(NamedTuple):
+    width: int
+    heigth: int
+
+
+class GenericVideoDevice(GenericDevice):
+    VRAM: memoryview
+    resolution: VideoResolution
+
+
+class GenericDeviceManager(Protocol):
+    video_device: Optional[GenericVideoDevice]
+    _WRITE_TO_PORTS: MutableMapping[int, Callable]
+    _READ_FROM_PORTS: MutableMapping[int, Callable]
+
+    def read_port(self, port_id: int) -> int: ...
+
+    def write_port(self, port_id: int, value: int): ...
+
+
+T = TypeVar("T")
+
+
+class GenericCPURegisterNames(enum.Enum):
+    @classmethod
+    def add_registers(
+        cls: type[enum.Enum],
+        cls_to_decorate: type[T],
+        reg_type: type = int,
+        default: Any = 0,
+    ) -> type[T]:
+        for reg_name in cls:
+            setattr(cls_to_decorate, reg_name.value, default)
+            cls_to_decorate.__annotations__[reg_name.value] = reg_type
+
+        return cls_to_decorate
+
+    @classmethod
+    def validate_register_names(
+        cls: type[enum.Enum], cls_to_decorate: type[T]
+    ) -> type[T]:
+        for reg_name in cls:
+            if not hasattr(cls_to_decorate, reg_name.value):
+                raise ValueError("Missing register name={reg_name}")
+
+        return cls_to_decorate
+
+
 class GenericCentralProcessingUnit(Protocol):
-    RAM: bytearray
+    RAM: memoryview
     # FLAGS: CPUFlags
     # REGISTERS: CPURegisters = field(default_factory=CPURegisters)
     # WORD_SIZE_BITS: int = WORD_SIZE
@@ -118,20 +192,29 @@ class GenericCentralProcessingUnit(Protocol):
         ...
 
 
+class GenericCentralProcessingUnitDevicePorts(GenericCentralProcessingUnit, Protocol):
+    DEVICE_MANAGER: GenericDeviceManager
+
+
 class GenericVirtualMachine(Protocol):
-    memory: bytearray
-    cpu: GenericCentralProcessingUnit
+    memory: memoryview
+    cpu: GenericCentralProcessingUnit | GenericCentralProcessingUnitDevicePorts
     assembler: GenericAssembler
     stack_address: int | None
     clock_speed_hz: int = 1
+    device_manager: GenericDeviceManager
 
     def get_registers(self) -> Mapping: ...
 
     def get_program_text(self) -> str: ...
 
-    def get_current_instruction_address(self): ...
+    def get_current_instruction_address(self) -> int: ...
 
-    def get_video_memory(self): ...
+    @property
+    def video_memory(self) -> bytearray | memoryview: ...
+
+    @property
+    def video_resolution(self) -> VideoResolution: ...
 
     def load_at(self, address: int, data: bytearray, force=False): ...
 
