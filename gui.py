@@ -177,7 +177,7 @@ class Controls(EventHandlingComponent):
                 self.ui_root.restart()
 
 
-class Dispaly:
+class Dispaly(EventHandlingComponent):
     def __init__(
         self,
         dim: pygame.Rect,
@@ -188,7 +188,11 @@ class Dispaly:
     ) -> None:
         self.ui_root = ui_root
 
-        display_window = pygame_gui.elements.UIWindow(
+        self.manager = manager
+
+        self.pressed_keys = set()
+
+        self.display_window = display_window = pygame_gui.elements.UIWindow(
             element_id="display_window",
             window_display_title=title,
             rect=vm_display_rect,
@@ -205,15 +209,29 @@ class Dispaly:
         )
 
     def refresh(self):
-        image_bytes = self.ui_root.vm.video_memory
-        resolution = self.ui_root.vm.video_resolution
+        video_device = self.ui_root.vm.device_manager.get_video_device(
+            hardware_device_id=vm_types.HardwareDeviceIds.DISP0
+        )
+        image_bytes = video_device.VRAM
+        resolution = video_device.resolution
+        color_format = video_device.color_format.value.code
         source = pygame.image.frombuffer(
             image_bytes,
-            # (self.display_surface_dims.w // 2, self.display_surface_dims.h // 2),
             resolution,
-            "RGB",
+            color_format,
         )
         self.display_image.set_image(source)
+
+    def handle_events(self, event):
+        if self.display_window in (self.manager.get_focus_set() or {}):
+            if event.type == pygame.KEYDOWN:
+                self.pressed_keys.add(event.key)
+            elif event.type == pygame.KEYUP:
+                self.pressed_keys.remove(event.key)
+
+            self.ui_root.vm.device_manager.get_char_device(
+                hardware_device_id=vm_types.HardwareDeviceIds.KBD0
+            ).update_on_state_change(data={"pressed_keys": self.pressed_keys})
 
 
 class Program:
@@ -433,6 +451,7 @@ class VirualMachineGUI:
         )
 
         self.eventable_components = [self.controls]
+        self.input_eventable_components = [self.display]
 
     def swap_vm(self, vm_key):
         self.vm = self.available_vms[vm_key]
@@ -475,6 +494,9 @@ class VirualMachineGUI:
 
                 if hasattr(event, "ui_element"):
                     for component in self.eventable_components:
+                        component.handle_events(event)
+                elif event.type in (pygame.KEYDOWN, pygame.KEYUP):
+                    for component in self.input_eventable_components:
                         component.handle_events(event)
 
                 self.manager.process_events(event)

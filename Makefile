@@ -27,7 +27,7 @@ freeze-deps:
 .PHONY: todo
 todo:
 	@less -f <(grep -r -I --exclude=Makefile --exclude-dir=.ruff_cache \
-	--exclude-dir=.venv --exclude-dir=examples 'TODO:' .) \
+	--exclude-dir=env --exclude-dir=examples 'TODO:' .) \
 	<(cat ./TODO.MD)
 
 .PHONY: dev_build_env

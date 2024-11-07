@@ -154,17 +154,20 @@ NOPARAMS_INSTRUCTIONS_META = {
         InstructionCodes.ADD,
         InstructionCodes.HALT,
         InstructionCodes.MOVAIX,
-        InstructionCodes.INA,
-        InstructionCodes.OUTA,
     ]
 }
 
 
 INLINE_PARAM_INSTRUCTIONS_META = {
-    InstructionCodes.LOADA: GenericOneInlineParamIns,
-    InstructionCodes.LOADB: GenericOneInlineParamIns,
-    InstructionCodes.LOADC: GenericOneInlineParamIns,
-    InstructionCodes.LOADIX: GenericOneInlineParamIns,
+    instruction: GenericOneInlineParamIns
+    for instruction in [
+        InstructionCodes.LOADA,
+        InstructionCodes.LOADB,
+        InstructionCodes.LOADC,
+        InstructionCodes.LOADIX,
+        InstructionCodes.INA,
+        InstructionCodes.OUTA,
+    ]
 }
 
 
@@ -253,6 +256,15 @@ LABEL .DATA:
 DWORD 0xABAB,0xCDCD,0xABAB,0xCDCD,0xABAB
 
 LABEL .START: NOP
+# Ports test if RETURN key is pressed
+# reg A = 1 if pressed while exec. INA port 10
+LOADA 13
+OUTA 0x000b
+INA 10
+LOADB -1
+ADD
+JZ .END # End program if RETURN pressed during check
+
 # Loop
 LOADA 0x000A
 LOADB -1
@@ -634,15 +646,55 @@ def jump_flag(instance: CentralProcessingUnit, flag_name: CPUFlagNames):
 
 
 @dataclass
-class VideoOutputDevice(vm_types.GenericVideoDevice):
+class VideoOutputDevice:
     VRAM_OFFSET: int
     VRAM_SIZE: int
-    VRAM: memoryview
+    buffer: Optional[memoryview]
     resolution: vm_types.VideoResolution
+    color_format: vm_types.ColorFormats = vm_types.ColorFormats.RGB
+    hardware_device_id: vm_types.HardwareDeviceIds = vm_types.HardwareDeviceIds.DISP0
+
+    def __post_init__(self):
+        if not self.buffer:
+            raise ValueError("Video device missing vram")
+
+    @property
+    def VRAM(self) -> memoryview:
+        if not self.buffer:
+            raise ValueError("Video device missing vram")
+        return self.buffer
 
     @virtual_machine.device_register_port(0, True)
     def get_vram_address(self):
         return self.VRAM_OFFSET
+
+    def update_on_state_change(self, data): ...
+
+    def device_tick(self): ...
+
+
+@dataclass
+class KbdInputDevice:
+    key_code: int = 0
+    hardware_device_id: vm_types.HardwareDeviceIds = vm_types.HardwareDeviceIds.KBD0
+    buffer: Optional[memoryview] = None
+    pressed_keys: set = field(default_factory=set)
+
+    @virtual_machine.device_register_port(10)
+    def is_key_pressed(self) -> int:
+        return 1 if self.key_code in self.pressed_keys else 0
+
+    @virtual_machine.device_register_port(11, False)
+    def set_check_key_code(self, val):
+        self.key_code = val
+
+    def update_on_state_change(self, data):
+        # TODO: How do we raise interrupts on device state change
+        self.pressed_keys = data["pressed_keys"]
+
+    def device_tick(self):
+        # TODO: Add characters to keyboard buffer ?
+        pass
 
 
 def instance_factory() -> vm_types.GenericVirtualMachine:
@@ -654,18 +706,21 @@ def instance_factory() -> vm_types.GenericVirtualMachine:
     SCREEN_HEIGHT = 400 // 8
 
     ram_size = 4 * 1024
-    vram_size = SCREEN_WIDTH * SCREEN_HEIGHT * 3
+    vram_size = SCREEN_WIDTH * SCREEN_HEIGHT * vm_types.ColorFormats.RGB.value.byte_size
     memory = bytearray(ram_size + vram_size)
     ram = memoryview(memory)
     vram = memoryview(memory)[ram_size : ram_size + vram_size]
 
     device_manager = virtual_machine.DeviceManager(
-        video_device=VideoOutputDevice(
-            ram_size,
-            vram_size,
-            vram,
-            vm_types.VideoResolution(SCREEN_WIDTH, SCREEN_HEIGHT),
-        ),
+        video_devices={
+            vm_types.HardwareDeviceIds.DISP0: VideoOutputDevice(
+                ram_size,
+                vram_size,
+                vram,
+                vm_types.VideoResolution(SCREEN_WIDTH, SCREEN_HEIGHT),
+            )
+        },
+        char_devices={vm_types.HardwareDeviceIds.KBD0: KbdInputDevice()},
     )
 
     cpu_instance = CentralProcessingUnit(

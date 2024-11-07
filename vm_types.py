@@ -23,6 +23,11 @@ RegistersDump = Mapping[str, int]
 DecoratorCallable = Callable[[Callable], Callable]
 
 
+class HardwareDeviceIds(enum.Enum):
+    DISP0 = enum.auto()
+    KBD0 = enum.auto()
+
+
 class GenericAssembler(Protocol):
     word_size_bytes: SizeInBytes
     symbol_table: dict[str, Any]
@@ -86,11 +91,17 @@ class PortLabeldCallable:
         self.__func__ = func
         self.info = info
 
-    def __call__(self, *args, **kwargs) -> Any:
-        return self.__func__(*args, **kwargs)
+    def __call__(self, instance, *args, **kwargs) -> Any:
+        return self.__func__(instance, *args, **kwargs)
 
 
-class GenericDevice: ...
+class GenericDevice(Protocol):
+    buffer: Optional[memoryview]
+    hardware_device_id: HardwareDeviceIds
+
+    def update_on_state_change(self, data: Mapping[str, Any]): ...
+
+    def device_tick(self): ...
 
 
 class VideoResolution(NamedTuple):
@@ -98,19 +109,41 @@ class VideoResolution(NamedTuple):
     heigth: int
 
 
-class GenericVideoDevice(GenericDevice):
-    VRAM: memoryview
+class ColorFormat(NamedTuple):
+    code: str
+    byte_size: int
+
+
+class ColorFormats(enum.Enum):
+    RGB = ColorFormat("RGB", 3)
+
+
+class GenericVideoDevice(GenericDevice, Protocol):
+    color_format: ColorFormats = ColorFormats.RGB
     resolution: VideoResolution
+
+    @property
+    def VRAM(self) -> memoryview: ...
+
+
+class GenericCharacterDevice(GenericDevice, Protocol): ...
 
 
 class GenericDeviceManager(Protocol):
-    video_device: Optional[GenericVideoDevice]
     _WRITE_TO_PORTS: MutableMapping[int, Callable]
     _READ_FROM_PORTS: MutableMapping[int, Callable]
+
+    def process_devices_on_tick(self): ...
 
     def read_port(self, port_id: int) -> int: ...
 
     def write_port(self, port_id: int, value: int): ...
+
+    def get_video_device(self, hardware_device_id) -> Optional[GenericVideoDevice]: ...
+
+    def get_char_device(
+        self, hardware_device_id
+    ) -> Optional[GenericCharacterDevice]: ...
 
 
 T = TypeVar("T")
@@ -209,12 +242,6 @@ class GenericVirtualMachine(Protocol):
     def get_program_text(self) -> str: ...
 
     def get_current_instruction_address(self) -> int: ...
-
-    @property
-    def video_memory(self) -> bytearray | memoryview: ...
-
-    @property
-    def video_resolution(self) -> VideoResolution: ...
 
     def load_at(self, address: int, data: bytearray, force=False): ...
 
