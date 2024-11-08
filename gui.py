@@ -192,7 +192,7 @@ class Dispaly(EventHandlingComponent):
 
         self.pressed_keys = set()
 
-        self.display_window = display_window = pygame_gui.elements.UIWindow(
+        self.display_window = pygame_gui.elements.UIWindow(
             element_id="display_window",
             window_display_title=title,
             rect=vm_display_rect,
@@ -203,7 +203,7 @@ class Dispaly(EventHandlingComponent):
         display_surface = pygame.Surface(self.display_surface_dims)
         self.display_image = pygame_gui.elements.UIImage(
             relative_rect=dim,
-            container=display_window,
+            container=self.display_window,
             image_surface=display_surface,
             manager=manager,
         )
