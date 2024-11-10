@@ -146,6 +146,7 @@ class VirtualMachine:
     stack_address: int | None = None
     clock_speed_hz: int = 1
     _ellapsed_since_last: float = 0
+    instructions_per_tick: float = 0
 
     def __post_init__(self):
         self.restart()
@@ -161,6 +162,9 @@ class VirtualMachine:
 
     def get_current_instruction_address(self):
         return self.cpu.current_inst_address
+
+    def set_clock_speed(self, in_hertz: int):
+        self.clock_speed_hz = in_hertz
 
     def load_at(self, address: int, data: bytearray, force=False):
         data_len = len(data)
@@ -209,6 +213,10 @@ class VirtualMachine:
         self._ellapsed_since_last += milli_sec_since_last
         if self._ellapsed_since_last < 1000 / self.clock_speed_hz:
             return
+
+        self.instructions_per_tick = (
+            1000 / self.clock_speed_hz
+        ) / self._ellapsed_since_last
 
         self._ellapsed_since_last = 0
         try:

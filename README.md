@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="logo2.png" width="820">
+  <img src="assests/logo2.png" width="820">
 </p>
 
 # Snake toy VM :snake:
@@ -19,7 +19,7 @@ A generalized toy virtual machine, assembler, debugger/ UI written in python. In
 *It's all virtual machines in virtual machins in virtual machines ... and soon Transformer models infrencing the output of virtual machines ... - Probaly someone*
 
 <p align="center">
-  <img src="screen_shot.png" width="500">
+  <img src="./assests/screen_shot_2024_11_10.png" width="500">
 </p>
 
 ## Why?
