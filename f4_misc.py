@@ -509,7 +509,9 @@ def instance_factory() -> vm_types.GenericVirtualMachine:
 
 
 if __name__ == "__main__":
-    import log  # noqa
+    import log
+
+    log.init_logging()
 
     vm_instance = instance_factory()
 

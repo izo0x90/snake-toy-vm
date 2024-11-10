@@ -8,6 +8,7 @@ import log
 logger = log.logging.getLogger(__name__)
 
 if __name__ == "__main__":
+    log.init_logging(debug=False)
     logger.debug(sys.argv)
 
     vm_instances = {
