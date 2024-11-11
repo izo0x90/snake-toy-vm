@@ -7,8 +7,16 @@ import log
 
 logger = log.logging.getLogger(__name__)
 
+SWITCH_ARG_PREFIX = "--"
+
 if __name__ == "__main__":
-    log.init_logging(debug=False)
+    debug = False
+    if len(sys.argv) > 1 and sys.argv[1].startswith(SWITCH_ARG_PREFIX):
+        match arg_key := sys.argv.pop(1).split(SWITCH_ARG_PREFIX):
+            case _, "debug":
+                debug = True
+
+    log.init_logging(debug=debug)
     logger.debug(sys.argv)
 
     vm_instances = {

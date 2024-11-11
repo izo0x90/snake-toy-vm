@@ -11,7 +11,7 @@ A generalized toy virtual machine, assembler, debugger/ UI written in python. In
   - Allows for definition of custom assembly sytaxes
   - Swapping/ extending instruction sets
 - VMs currently in project
-  - Toy VM (In progress)
+  - Toy VM (Completed) ✔️
   - Brainfuck (Completed) ✔️
   - F4 MISc (Completed) ✔️
   - 8 bit PIC (In progress)
@@ -19,7 +19,8 @@ A generalized toy virtual machine, assembler, debugger/ UI written in python. In
 *It's all virtual machines in virtual machins in virtual machines ... and soon Transformer models infrencing the output of virtual machines ... - Probaly someone*
 
 <p align="center">
-  <img src="./assests/screen_shot_2024_11_10.png" width="500">
+  <img src="./assests/screen_shot_2024_11_11.png" width="500">
+  <img src="./assests/screen_shot_2024_11_11b.png" width="500">
 </p>
 
 ## Why?
@@ -63,6 +64,10 @@ python main.py 8_bit_pic f4_misc brainfuck
 or you can pass-in the same arch. module multiple times to get more than one instance of the same VM type
 ```
 python main.py toy_vm toy_vm
+```
+Load with debug logging, first arg. must be `--debug`
+```
+python main.py --debug toy_vm toy_vm
 ```
 
 ## Contribute

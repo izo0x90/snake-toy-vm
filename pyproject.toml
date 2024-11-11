@@ -1,0 +1,18 @@
+[project]
+version = "v1.0.0"
+
+authors = [
+  {name = "Hristo I. Gueorguiev", github = "izo0x90"},
+  {name = "Kaloyan Tenchov", github = "zayfod"},
+]
+
+description = "A generalized/ multi-arch. toy virtual machine, assembler and debugger written in Python. Just a fun project in python building a classical computer emulator."
+
+readme = "README.md"
+
+license = {text = "MIT License"}
+
+
+[project.urls]
+
+Repository = "https://github.com/izo0x90/snake-toy-vm"
