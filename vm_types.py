@@ -116,10 +116,11 @@ class ColorFormat(NamedTuple):
 
 class ColorFormats(enum.Enum):
     RGB = ColorFormat("RGB", 3)
+    ARGB = ColorFormat("ARGB", 4)
 
 
 class GenericVideoDevice(GenericDevice, Protocol):
-    color_format: ColorFormats = ColorFormats.RGB
+    color_format: ColorFormats
     resolution: VideoResolution
 
     @property

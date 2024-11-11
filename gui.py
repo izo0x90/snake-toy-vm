@@ -77,14 +77,14 @@ class Controls(EventHandlingComponent):
         toggle_run_dim = pygame.Rect(
             (0, dropdown_dim.h), (dropdown_dim.w // 3, dropdown_dim.h)
         )
-        toggle_run_button = pygame_gui.elements.UIButton(
+        self.toggle_run_button = pygame_gui.elements.UIButton(
             object_id="toggle_run_button",
             relative_rect=toggle_run_dim,
             text=self.stoped_cta,
             container=controls_window,
             manager=manager,
         )
-        self.register_eventable_component(toggle_run_button)
+        self.register_eventable_component(self.toggle_run_button)
 
         restart_dim = pygame.Rect(
             (dropdown_dim.w // 3, dropdown_dim.h), (dropdown_dim.w // 3, dropdown_dim.h)
@@ -117,20 +117,46 @@ class Controls(EventHandlingComponent):
         self.mhz_label = pygame_gui.elements.UILabel(
             relative_rect=mhz_label_dim,
             container=controls_window,
-            text=str(START_SPEED_HZ),
+            text=f"{START_SPEED_HZ}Hz",
             manager=manager,
         )
 
         ins_per_tick_label_dim = pygame.Rect(
-            (dropdown_dim.w // 2, dropdown_dim.h * 2),
-            (dropdown_dim.w // 2, dropdown_dim.h),
+            (dropdown_dim.w // 3, dropdown_dim.h * 2),
+            (dropdown_dim.w // 3, dropdown_dim.h),
         )
         self.ins_per_tick_label = pygame_gui.elements.UILabel(
             relative_rect=ins_per_tick_label_dim,
             container=controls_window,
-            text="0",
+            text="0Ipc",
             manager=manager,
         )
+
+        cycles_per_sec_dim = pygame.Rect(
+            ((dropdown_dim.w // 3) * 2, dropdown_dim.h * 2),
+            ((dropdown_dim.w // 3) // 2, dropdown_dim.h),
+        )
+        self.cycles_per_sec = pygame_gui.elements.UITextEntryLine(
+            relative_rect=cycles_per_sec_dim,
+            container=controls_window,
+            initial_text=str(self.ui_root.cycles_per_sec),
+            manager=manager,
+        )
+        cps_button_dim = pygame.Rect(
+            (
+                ((dropdown_dim.w // 3) * 2) + ((dropdown_dim.w // 3) // 2),
+                dropdown_dim.h * 2,
+            ),
+            ((dropdown_dim.w // 3) // 2, dropdown_dim.h),
+        )
+        cps_button = pygame_gui.elements.UIButton(
+            object_id="cps_button",
+            relative_rect=cps_button_dim,
+            text="Set CPS",
+            container=controls_window,
+            manager=manager,
+        )
+        self.register_eventable_component(cps_button)
 
         mhz_slider_dim = pygame.Rect(
             (0, dropdown_dim.h * 3), (dropdown_dim.w, dropdown_dim.h)
@@ -145,6 +171,7 @@ class Controls(EventHandlingComponent):
             manager=manager,
         )
         mhz_slider.set_current_value(1, 0, False)
+        mhz_slider.update(0.0)
         self.register_eventable_component(mhz_slider)
 
         program_path_dim = pygame.Rect(
@@ -173,7 +200,15 @@ class Controls(EventHandlingComponent):
         self.register_eventable_component(load_program_button)
 
     def refresh(self):
-        self.ins_per_tick_label.set_text(str(self.ui_root.vm.instructions_per_tick))
+        self.ins_per_tick_label.set_text(
+            f"{self.ui_root.vm.instructions_per_tick:.4f}Ipc"
+        )
+
+        if self.ui_root.state_changed:
+            if not self.ui_root.vm_is_running:
+                self.toggle_run_button.set_text(self.stoped_cta)
+            else:
+                self.toggle_run_button.set_text(self.running_cta)
 
     def handle_events(self, event):
         if event.ui_element not in self.eventable_components:
@@ -206,10 +241,17 @@ class Controls(EventHandlingComponent):
                 self.ui_root.restart(full_reset=True)
             elif "restart_button" in event_object_ids:
                 self.ui_root.restart()
+            elif "cps_button" in event_object_ids:
+                try:
+                    cps = int(self.cycles_per_sec.get_text())
+                    self.ui_root.cycles_per_sec = cps
+                except ValueError:
+                    pass
+
         elif event.type == pygame_gui.UI_2D_SLIDER_MOVED:
             hertz, _ = event.value
             self.ui_root.vm.set_clock_speed(hertz)
-            self.mhz_label.set_text(str(hertz))
+            self.mhz_label.set_text(f"{str(hertz)}Hz")
             logger.debug(f"Setting speed to {hertz=}")
 
 
@@ -497,6 +539,7 @@ class VirualMachineGUI:
         pygame.init()
         pygame.display.set_caption(text_data.title)
 
+        self.cycles_per_sec = 10000
         self.is_running = True
         self.vm_is_running = False
         self.state_changed = True
@@ -634,8 +677,8 @@ class VirualMachineGUI:
 
     def run(self):
         while self.is_running:
-            time_delta_milli = self.clock.tick(60)
-            time_delta = self.clock.tick(60) / 1000.0
+            time_delta_milli = self.clock.tick(self.cycles_per_sec)
+            time_delta = time_delta_milli / 1000.0
 
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
@@ -659,7 +702,12 @@ class VirualMachineGUI:
                 self.manager.process_events(event)
 
             if self.vm_is_running:
-                self.vm.step(time_delta_milli)
+                try:
+                    self.vm.step(time_delta_milli)
+                except Exception as e:
+                    logger.exception(e)
+                    self.vm_is_running = False
+                    self.state_changed = True
 
             self.refresh()
 

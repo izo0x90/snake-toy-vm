@@ -38,12 +38,18 @@ class InstructionCodes(vm_types.GenericInstructionSet):
     JS = 0x13
     JC = 0x14
     MOVAIX = 0xA0
+    MOVAC = 0xA2
     MSTOREA = 0xB0
     MSTOREB = 0xB1
     MSTOREC = 0xB2
     INA = 0xC0
     OUTA = 0xC1
+    POPA = 0xD0
+    PUSHA = 0xD1
+    POPB = 0xD2
+    PUSHB = 0xD3
     ADD = 0xF0
+    NEGB = 0x01F1
     HALT = HALT_INS_CODE
 
 
@@ -154,6 +160,12 @@ NOPARAMS_INSTRUCTIONS_META = {
         InstructionCodes.ADD,
         InstructionCodes.HALT,
         InstructionCodes.MOVAIX,
+        InstructionCodes.MOVAC,
+        InstructionCodes.POPA,
+        InstructionCodes.POPB,
+        InstructionCodes.PUSHA,
+        InstructionCodes.PUSHB,
+        InstructionCodes.NEGB,
     ]
 }
 
@@ -250,7 +262,6 @@ MACROS_META = {
 
 TEST_PROG = """
 # 16-bit word tests
-
 JMP .START
 LABEL .DATA:
 DWORD 0xABAB,0xCDCD,0xABAB,0xCDCD,0xABAB
@@ -264,6 +275,15 @@ INA 10
 LOADB -1
 ADD
 JZ .END # End program if RETURN pressed during check
+
+# Push/ Pop stack tests
+LOADA 0x0001
+PUSHA
+LOADA 0x0002
+PUSHA
+LOADA 0xFFFF
+POPA
+POPA
 
 # Loop
 LOADA 0x000A
@@ -327,6 +347,7 @@ class AddressModes:
     IMMEDIATE = 0
     DIRECT = 1
     DIRECT_INDEXED = 2
+    REGISTER_INDIRECT = 254
     REGISTER = 255
 
 
@@ -460,6 +481,7 @@ def load(
     reg_name: CPURegisterNames,
     ip_unmodified=False,
     address_mode=AddressModes.IMMEDIATE,
+    dest_reg_name: Optional[CPURegisterNames] = None,
 ):
     bytes_val = instance.RAM[
         instance.REGISTERS.IP : instance.REGISTERS.IP + instance.word_in_bytes
@@ -474,7 +496,13 @@ def load(
             val = int.from_bytes(
                 instance.RAM[address : address + instance.word_in_bytes]
             )
-
+        case AddressModes.REGISTER_INDIRECT:
+            if not dest_reg_name:
+                raise ValueError("Missing destination register name")
+            address = getattr(instance.REGISTERS, dest_reg_name.value)
+            val = int.from_bytes(
+                instance.RAM[address : address + instance.word_in_bytes]
+            )
         case _:
             raise ValueError(f"Unknown {address_mode=} for load OP")
 
@@ -507,7 +535,13 @@ def store(
             if not dest_reg_name:
                 raise ValueError("Missing destination register name")
             setattr(instance.REGISTERS, dest_reg_name.value, val)
+        case AddressModes.REGISTER_INDIRECT:
+            if not dest_reg_name:
+                raise ValueError("Missing destination register name")
+            val = val.to_bytes(length=instance.word_in_bytes)
+            address = getattr(instance.REGISTERS, dest_reg_name.value)
 
+            instance.RAM[address : address + instance.word_in_bytes] = val
         case _:
             raise ValueError(f"Unknown {address_mode=} for store OP")
 
@@ -556,6 +590,13 @@ def mload_direct(instance: CentralProcessingUnit, reg_name: CPURegisterNames):
                 "dest_reg_name": CPURegisterNames.IX,
             },
         ),
+        (
+            InstructionCodes.MOVAC,
+            {
+                "source_reg_name": CPURegisterNames.AA,
+                "dest_reg_name": CPURegisterNames.AC,
+            },
+        ),
     ]
 )
 def rstore(
@@ -579,6 +620,39 @@ def rstore(
 )
 def mstore_direct(instance: CentralProcessingUnit, source_reg_name: CPURegisterNames):
     store(instance, source_reg_name, address_mode=AddressModes.DIRECT_INDEXED)
+
+
+@CentralProcessingUnit.register_instruction_variants(
+    [
+        (InstructionCodes.PUSHA, {"source_reg_name": CPURegisterNames.AA}),
+        (InstructionCodes.PUSHB, {"source_reg_name": CPURegisterNames.AB}),
+    ]
+)
+def push(instance: CentralProcessingUnit, source_reg_name: CPURegisterNames):
+    instance.REGISTERS.SP -= instance.word_in_bytes
+    store(
+        instance,
+        source_reg_name,
+        dest_reg_name=CPURegisterNames.SP,
+        address_mode=AddressModes.REGISTER_INDIRECT,
+    )
+
+
+@CentralProcessingUnit.register_instruction_variants(
+    [
+        (InstructionCodes.POPA, {"source_reg_name": CPURegisterNames.AA}),
+        (InstructionCodes.POPB, {"source_reg_name": CPURegisterNames.AB}),
+    ]
+)
+def pop(instance: CentralProcessingUnit, source_reg_name: CPURegisterNames):
+    load(
+        instance,
+        source_reg_name,
+        dest_reg_name=CPURegisterNames.SP,
+        address_mode=AddressModes.REGISTER_INDIRECT,
+        ip_unmodified=True,
+    )
+    instance.REGISTERS.SP += instance.word_in_bytes
 
 
 @CentralProcessingUnit.register_instruction(InstructionCodes.INA)
@@ -628,6 +702,20 @@ def add_inst(instance: CentralProcessingUnit):
         instance.FLAGS.overflow = True
 
 
+@CentralProcessingUnit.register_instruction_variants(
+    [
+        (InstructionCodes.NEGB, {"reg_name": CPURegisterNames.AB}),
+    ]
+)
+def neg(instance: CentralProcessingUnit, reg_name: CPURegisterNames):
+    # Worlds most inefficient twos compliment negation lol
+    val = getattr(instance.REGISTERS, reg_name.value)
+    val *= -1
+    val = val.to_bytes(length=instance.word_in_bytes, signed=True)
+    val = int.from_bytes(val, signed=False)
+    setattr(instance.REGISTERS, reg_name.value, val)
+
+
 @CentralProcessingUnit.register_instruction(InstructionCodes.JMP)
 def jump_to(instance: CentralProcessingUnit):
     jump(instance)
@@ -651,7 +739,7 @@ class VideoOutputDevice:
     VRAM_SIZE: int
     buffer: Optional[memoryview]
     resolution: vm_types.VideoResolution
-    color_format: vm_types.ColorFormats = vm_types.ColorFormats.RGB
+    color_format: vm_types.ColorFormats = vm_types.ColorFormats.ARGB
     hardware_device_id: vm_types.HardwareDeviceIds = vm_types.HardwareDeviceIds.DISP0
 
     def __post_init__(self):
@@ -706,7 +794,9 @@ def instance_factory() -> vm_types.GenericVirtualMachine:
     SCREEN_HEIGHT = 400 // 8
 
     ram_size = 4 * 1024
-    vram_size = SCREEN_WIDTH * SCREEN_HEIGHT * vm_types.ColorFormats.RGB.value.byte_size
+    vram_size = (
+        SCREEN_WIDTH * SCREEN_HEIGHT * vm_types.ColorFormats.ARGB.value.byte_size
+    )
     memory = bytearray(ram_size + vram_size)
     ram = memoryview(memory)
     vram = memoryview(memory)[ram_size : ram_size + vram_size]
@@ -733,6 +823,7 @@ def instance_factory() -> vm_types.GenericVirtualMachine:
     vm_instance = virtual_machine.VirtualMachine(
         memory=ram,
         cpu=cpu_instance,
+        stack_address=ram_size - 1,
         assembler=assembler_instance,
         device_manager=device_manager,
     )

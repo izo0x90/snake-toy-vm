@@ -200,7 +200,7 @@ class VirtualMachine:
 
     def restart(self):
         self.cpu.reset()
-        self.cpu.current_stack_address = self.stack_address or len(self.memory) - 1
+        self.cpu.current_stack_address = self.stack_address or len(self.cpu.RAM) - 1
         self.current_run = self.cpu.run()
 
     def reset(self):
